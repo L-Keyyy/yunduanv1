@@ -380,14 +380,14 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "sudo systemctl is-active ozon-backend ozon-worker ozon-beat ozon-chrome nginx; echo '---'; curl -sS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -sS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
+            "set -e; sudo systemctl is-active ozon-backend ozon-worker ozon-beat ozon-chrome nginx; echo '---'; curl -fsS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -fsS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
         )
 
         Write-Step "Checking public SPA route"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "curl -sS -I http://127.0.0.1/register | head -n 5"
+            "set -e; curl -fsS -I http://127.0.0.1/register | head -n 5"
         )
     }
 
