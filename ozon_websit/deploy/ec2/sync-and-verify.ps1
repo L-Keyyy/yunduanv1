@@ -229,7 +229,6 @@ try {
         "--exclude=backend/.venv",
         "--exclude=backend/__pycache__",
         "--exclude=backend/cache",
-        "--exclude=backend/ozon.db",
         "--exclude=backend/alembic_validation.db",
         "--exclude=backend/backend.stdout.log",
         "--exclude=backend/backend.stderr.log",
@@ -329,10 +328,6 @@ if [ -f "${BACKUP_ROOT}/ozon_backend/.env" ]; then
   cp -a "${BACKUP_ROOT}/ozon_backend/.env" "${LIVE_BACKEND}/.env"
 fi
 
-if [ -f "${BACKUP_ROOT}/ozon_backend/ozon.db" ]; then
-  cp -a "${BACKUP_ROOT}/ozon_backend/ozon.db" "${LIVE_BACKEND}/ozon.db"
-fi
-
 if [ -d "${BACKUP_ROOT}/ozon_backend/cache" ]; then
   cp -a "${BACKUP_ROOT}/ozon_backend/cache" "${LIVE_BACKEND}/cache"
 fi
@@ -376,7 +371,7 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "test ! -d $remoteStaging && sudo systemctl is-active ozon-backend ozon-worker ozon-beat nginx redis6 >/dev/null && curl -fsS http://127.0.0.1:8000/healthz >/dev/null"
+            "test ! -d $remoteStaging && sudo systemctl is-active ozon-backend ozon-worker ozon-beat nginx >/dev/null && curl -fsS http://127.0.0.1:8000/healthz >/dev/null"
         )
     }
 
@@ -385,7 +380,7 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "sudo systemctl is-active ozon-backend ozon-worker ozon-beat ozon-chrome nginx redis6; echo '---'; curl -sS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -sS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
+            "sudo systemctl is-active ozon-backend ozon-worker ozon-beat ozon-chrome nginx; echo '---'; curl -sS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -sS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
         )
 
         Write-Step "Checking public SPA route"

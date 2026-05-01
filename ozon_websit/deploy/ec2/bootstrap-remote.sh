@@ -22,7 +22,7 @@ if [[ ! -d "${DEPLOY_ROOT}" ]]; then
   exit 1
 fi
 
-sudo dnf install -y nginx redis6 python3.12 python3.12-pip tar gzip unzip xorg-x11-server-Xvfb xorg-x11-xauth >/dev/null
+sudo dnf install -y nginx python3.12 python3.12-pip tar gzip unzip xorg-x11-server-Xvfb xorg-x11-xauth >/dev/null
 
 for pkg in \
   alsa-lib \
@@ -54,6 +54,37 @@ rm -rf "${APP_ROOT}/.venv"
 
 if [[ ! -f "${APP_ROOT}/.env" ]]; then
   cp "${DEPLOY_ROOT}/backend.env.example" "${APP_ROOT}/.env"
+fi
+
+env_value() {
+  local key="$1"
+  grep -E "^${key}=" "${APP_ROOT}/.env" | tail -n 1 | cut -d= -f2- | tr -d '\r'
+}
+
+database_url="$(env_value DATABASE_URL)"
+redis_url="$(env_value REDIS_URL)"
+broker_url="$(env_value CELERY_BROKER_URL)"
+result_backend="$(env_value CELERY_RESULT_BACKEND)"
+field_key="$(env_value FIELD_ENCRYPTION_KEY)"
+
+if [[ -z "${database_url}" || "${database_url}" == *"your-rds-endpoint"* || "${database_url}" == sqlite:* ]]; then
+  echo "invalid DATABASE_URL in ${APP_ROOT}/.env; production deploy requires PostgreSQL/RDS" >&2
+  exit 1
+fi
+
+if [[ -z "${redis_url}" || "${redis_url}" == *"your-redis-endpoint"* ]]; then
+  echo "invalid REDIS_URL in ${APP_ROOT}/.env; production deploy requires Redis/ElastiCache" >&2
+  exit 1
+fi
+
+if [[ -z "${broker_url}" || "${broker_url}" == *"your-redis-endpoint"* || -z "${result_backend}" || "${result_backend}" == *"your-redis-endpoint"* ]]; then
+  echo "invalid Celery Redis settings in ${APP_ROOT}/.env; set CELERY_BROKER_URL and CELERY_RESULT_BACKEND" >&2
+  exit 1
+fi
+
+if [[ -z "${field_key}" || "${field_key}" == change-me* ]]; then
+  echo "invalid FIELD_ENCRYPTION_KEY in ${APP_ROOT}/.env; set a long secret or Fernet key" >&2
+  exit 1
 fi
 
 mkdir -p "$(dirname "${CHROME_ROOT}")"
@@ -97,8 +128,7 @@ sudo rm -rf /usr/share/nginx/html/*
 sudo cp -r "${FRONTEND_ROOT}/." /usr/share/nginx/html/
 
 sudo systemctl daemon-reload
-sudo systemctl enable redis6 nginx ozon-backend ozon-worker ozon-beat ozon-chrome >/dev/null
-sudo systemctl restart redis6
+sudo systemctl enable nginx ozon-backend ozon-worker ozon-beat ozon-chrome >/dev/null
 sudo systemctl restart ozon-backend
 sudo systemctl restart ozon-worker
 sudo systemctl restart ozon-beat

@@ -1,11 +1,13 @@
 ## EC2 deployment
 
-This deployment layout keeps the current single-instance shape:
+This deployment layout keeps the app server stateless and expects cloud-managed
+storage:
 
 - `nginx` serves the Vue `dist` directory on port `80`
 - `uvicorn` runs the FastAPI app on `127.0.0.1:8000`
-- `redis6` backs Celery async jobs
-- `celery` runs background sync tasks
+- PostgreSQL/RDS stores durable business data
+- Redis/ElastiCache backs Celery async jobs and short TTL cache
+- `celery` worker/beat runs cloud-side upload, sync, and analytics tasks
 - `chrome-for-testing` runs headless on `127.0.0.1:9222` for browser-assisted Seller workflows
 
 ### Expected paths
@@ -20,7 +22,7 @@ This deployment layout keeps the current single-instance shape:
 1. Upload this directory to `/home/ec2-user/ozon_deploy`.
 2. Upload the backend code to `/home/ec2-user/ozon_backend`.
 3. Upload the frontend `dist` directory to `/home/ec2-user/ozon_frontend_dist`.
-4. Copy `backend.env.example` to `/home/ec2-user/ozon_backend/.env` and fill the real values.
+4. Copy `backend.env.example` to `/home/ec2-user/ozon_backend/.env` and fill the real PostgreSQL, Redis, `SECRET_KEY`, and `FIELD_ENCRYPTION_KEY` values.
 5. Run:
 
 ```bash
@@ -38,7 +40,7 @@ Windows workspace. It will:
 - build the frontend `dist`
 - upload backend code, frontend assets, and deploy files
 - backup the current cloud release before swapping
-- preserve remote `.env`, `ozon.db`, and `backend/cache`
+- preserve remote `.env` and `backend/cache`
 - restart services and verify health endpoints
 
 Example:
@@ -59,10 +61,26 @@ Optional flags:
 ### Runtime checks
 
 ```bash
-sudo systemctl status ozon-backend ozon-worker ozon-chrome redis6 nginx
+sudo systemctl status ozon-backend ozon-worker ozon-beat ozon-chrome nginx
 curl -sS http://127.0.0.1:8000/healthz
 curl -sS http://127.0.0.1:8000/api/v1/health
 curl -sS http://127.0.0.1:9222/json/version
+```
+
+### One-time SQLite migration
+
+If an existing single-node deployment already has `ozon.db`, back it up before
+switching `DATABASE_URL` to PostgreSQL. After PostgreSQL migrations are applied,
+run the one-time migrator from the backend virtualenv:
+
+```bash
+sudo systemctl stop ozon-beat ozon-worker ozon-backend
+cd /home/ec2-user/ozon_backend
+./.venv/bin/python /home/ec2-user/ozon_deploy/migrate-sqlite-to-postgres.py \
+  --sqlite /home/ec2-user/ozon_sqlite_backup_YYYYMMDD-HHMMSS.db \
+  --env /home/ec2-user/ozon_backend/.env \
+  --yes
+sudo systemctl start ozon-backend ozon-worker ozon-beat
 ```
 
 ### Seller session
@@ -81,13 +99,16 @@ The sync script treats the cloud host as a mixed stateful/stateless deployment:
 
 - stateless and safe to overwrite: backend source code, frontend `dist`,
   systemd service files, nginx config
-- stateful and preserved on every deploy: backend `.env`, `ozon.db`,
-  `backend/cache`, and the Chrome profile under `/home/ec2-user/chrome-profile`
+- stateful and preserved on every deploy: backend `.env`, `backend/cache`,
+  and the Chrome profile under `/home/ec2-user/chrome-profile`
 
-For the next cloud step, the recommended storage split is:
+Required production storage split:
 
 - secrets and credentials: Parameter Store or Secrets Manager, not the repo
 - business data: PostgreSQL/RDS
 - queue and cache: Redis/ElastiCache
 - browser-assisted Seller session: isolated on the Chrome helper EC2
 - large import/export files and screenshots: S3
+
+Do not use SQLite in production. The backend now refuses to start with
+`APP_ENV=production` when `DATABASE_URL` points to SQLite.

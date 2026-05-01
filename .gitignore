@@ -52,6 +52,7 @@ deploy_tmp_dist/
 # Runtime cache and generated output
 cache/
 **/cache/
+celerybeat-schedule*
 output/
 **/output/
 tmp/

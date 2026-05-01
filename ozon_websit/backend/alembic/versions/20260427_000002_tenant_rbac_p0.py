@@ -25,6 +25,38 @@ def _add_column(table_name: str, column: sa.Column) -> None:
         op.add_column(table_name, column)
 
 
+def _table_exists(table_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return table_name in inspector.get_table_names()
+
+
+def _create_users_table_if_missing() -> None:
+    if _table_exists("users"):
+        return
+
+    op.create_table(
+        "users",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("username", sa.String(), nullable=False),
+        sa.Column("display_name", sa.String(), nullable=False),
+        sa.Column("email", sa.String(), nullable=True),
+        sa.Column("password_hash", sa.String(), nullable=False),
+        sa.Column("primary_tenant_id", sa.Integer(), nullable=True),
+        sa.Column("is_active", sa.Boolean(), nullable=False),
+        sa.Column("is_admin", sa.Boolean(), nullable=False),
+        sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True),
+        sa.ForeignKeyConstraint(["primary_tenant_id"], ["tenants.id"]),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_users_id"), "users", ["id"], unique=False)
+    op.create_index(op.f("ix_users_username"), "users", ["username"], unique=True)
+    op.create_index(op.f("ix_users_email"), "users", ["email"], unique=True)
+    op.create_index(op.f("ix_users_primary_tenant_id"), "users", ["primary_tenant_id"], unique=False)
+
+
 def upgrade() -> None:
     op.create_table(
         "tenants",
@@ -46,6 +78,8 @@ def upgrade() -> None:
     op.create_index(op.f("ix_tenants_slug"), "tenants", ["slug"], unique=True)
     op.create_index(op.f("ix_tenants_status"), "tenants", ["status"], unique=False)
     op.create_index(op.f("ix_tenants_subscription_status"), "tenants", ["subscription_status"], unique=False)
+
+    _create_users_table_if_missing()
 
     op.create_table(
         "tenant_members",

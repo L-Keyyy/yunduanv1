@@ -1,7 +1,7 @@
 [Unit]
 Description=Ozon Celery Worker
-After=network.target redis6.service
-Requires=redis6.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=ec2-user
