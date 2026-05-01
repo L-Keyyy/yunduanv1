@@ -313,7 +313,7 @@ tar -xzf "${STAGING_ROOT}/frontend.tgz" -C "${NEW_FRONTEND}"
 tar -xzf "${STAGING_ROOT}/deploy.tgz" -C "${NEW_DEPLOY}"
 mv "${STAGING_ROOT}/backend" "${NEW_BACKEND}/app"
 
-sudo systemctl stop ozon-beat ozon-worker ozon-backend || true
+sudo systemctl stop ozon-beat ozon-upload-worker ozon-browser-worker ozon-worker ozon-backend || true
 
 if [ -d "${LIVE_BACKEND}" ]; then mv "${LIVE_BACKEND}" "${BACKUP_ROOT}/ozon_backend"; fi
 if [ -d "${LIVE_FRONTEND}" ]; then mv "${LIVE_FRONTEND}" "${BACKUP_ROOT}/ozon_frontend_dist"; fi
@@ -371,7 +371,7 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "test ! -d $remoteStaging && sudo systemctl is-active ozon-backend ozon-worker ozon-beat nginx >/dev/null && curl -fsS http://127.0.0.1:8000/healthz >/dev/null"
+            "test ! -d $remoteStaging && sudo systemctl is-active ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat nginx >/dev/null && curl -fsS http://127.0.0.1:8000/healthz >/dev/null"
         )
     }
 
@@ -380,7 +380,7 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "set -e; sudo systemctl is-active ozon-backend ozon-worker ozon-beat ozon-chrome nginx; echo '---'; curl -fsS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -fsS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
+            "set -e; sudo systemctl is-active ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat ozon-chrome nginx; echo '---'; curl -fsS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -fsS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
         )
 
         Write-Step "Checking public SPA route"

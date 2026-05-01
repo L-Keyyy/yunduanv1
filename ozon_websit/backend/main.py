@@ -19,7 +19,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, statu
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
-from sqlalchemy import inspect, or_, text
+from sqlalchemy import func, inspect, or_, text
 from sqlalchemy.orm import Session
 from websocket import create_connection
 
@@ -69,16 +69,17 @@ _ACTIVITY_QUERY_CACHE_TTL_SECONDS = 120.0
 _ACTIVITY_CACHE_LOCK = Lock()
 _ACTIVITY_PRODUCT_DETAILS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _ACTIVITY_QUERY_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
-SELLER_MARKET_TRENDS_CACHE_TTL_SECONDS = 15.0
-SELLER_MARKET_TRENDS_DISK_CACHE_TTL_SECONDS = 86400.0
+SELLER_ANALYTICS_CACHE_TTL_SECONDS = float(settings.SELLER_ANALYTICS_CACHE_TTL_SECONDS)
+SELLER_MARKET_TRENDS_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
+SELLER_MARKET_TRENDS_DISK_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
 SELLER_MARKET_TRENDS_CACHE_LOCK = Lock()
 SELLER_MARKET_TRENDS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 SELLER_MARKET_TRENDS_CACHE_FILE = Path(__file__).resolve().parent / "cache" / "seller_market_trends.json"
-SELLER_MARKET_ALL_ROOTS_CACHE_TTL_SECONDS = 86400.0
+SELLER_MARKET_ALL_ROOTS_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
 SELLER_MARKET_ALL_ROOTS_CACHE_LOCK = Lock()
 SELLER_MARKET_ALL_ROOTS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 SELLER_MARKET_ALL_ROOTS_CACHE_FILE = Path(__file__).resolve().parent / "cache" / "seller_market_all_roots.json"
-SELLER_HOT_TAGS_CACHE_TTL_SECONDS = 86400.0
+SELLER_HOT_TAGS_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
 SELLER_HOT_TAGS_MAX_ROWS = 5000
 SELLER_HOT_TAGS_GROUP_SAMPLE_LIMIT = 50
 SELLER_HOT_TAGS_BATCH_SIZE = 5
@@ -88,7 +89,7 @@ SELLER_HOT_TAGS_DEFAULT_TREND_WINDOW_DAYS = 7
 SELLER_HOT_TAGS_CACHE_LOCK = Lock()
 SELLER_HOT_TAGS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 SELLER_HOT_TAGS_CACHE_FILE = Path(__file__).resolve().parent / "cache" / "seller_hot_tags.json"
-SELLER_PRODUCT_MARKET_CACHE_TTL_SECONDS = 180.0
+SELLER_PRODUCT_MARKET_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
 SELLER_PRODUCT_MARKET_CACHE_LOCK = Lock()
 SELLER_PRODUCT_MARKET_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
@@ -122,6 +123,19 @@ SYNC_JOB_TYPES = {
     "sync_orders": "同步订单",
     "sync_core": "核心同步",
 }
+UPLOAD_ACTIVE_STATUSES = {"dispatching", "uploading", "submitted", "processing"}
+UPLOAD_TERMINAL_STATUSES = {
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "canceled",
+}
+UPLOAD_RETRYABLE_STATUSES = {"queued", "retrying", "submit_failed", "queue_failed"}
+UPLOAD_DISPATCH_LIMIT = int(settings.UPLOAD_MAX_GLOBAL_ACTIVE_STORES)
+UPLOAD_RESULT_POLL_INTERVAL_SECONDS = int(settings.UPLOAD_RESULT_POLL_INTERVAL_SECONDS)
+UPLOAD_TIMEOUT_SECONDS = int(settings.UPLOAD_TIMEOUT_SECONDS)
+UPLOAD_MAX_ATTEMPTS = int(settings.UPLOAD_MAX_ATTEMPTS)
+ORDER_SYNC_INTERVAL_MINUTES = int(settings.ORDER_SYNC_INTERVAL_MINUTES)
 
 
 def _table_exists(table_name: str) -> bool:
@@ -215,6 +229,18 @@ def _ensure_tenant_schema() -> None:
     _add_column_if_missing("users", "last_login_at", "last_login_at TIMESTAMP")
     _add_column_if_missing("stores", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("upload_jobs", "tenant_id", "tenant_id INTEGER")
+    _add_column_if_missing("upload_jobs", "attempt_count", "attempt_count INTEGER DEFAULT 0 NOT NULL")
+    _add_column_if_missing("upload_jobs", "max_attempts", "max_attempts INTEGER DEFAULT 3 NOT NULL")
+    _add_column_if_missing("upload_jobs", "celery_task_id", "celery_task_id VARCHAR")
+    _add_column_if_missing("upload_jobs", "locked_at", "locked_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "started_at", "started_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "finished_at", "finished_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "next_attempt_at", "next_attempt_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "last_refreshed_at", "last_refreshed_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "next_refresh_at", "next_refresh_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "cancel_requested", "cancel_requested BOOLEAN DEFAULT FALSE NOT NULL")
+    _add_column_if_missing("upload_jobs", "canceled_at", "canceled_at TIMESTAMP")
+    _add_column_if_missing("upload_jobs", "timeout_seconds", "timeout_seconds INTEGER DEFAULT 900 NOT NULL")
     _add_column_if_missing("upload_job_items", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("products", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("order_records", "tenant_id", "tenant_id INTEGER")
@@ -4494,7 +4520,41 @@ def _health_status_code(payload: Dict[str, Any]) -> int:
     return 200 if payload.get("database", {}).get("status") == "ok" else 503
 
 
-def _submit_async_task(task_name: str, **kwargs: Any) -> Dict[str, Any]:
+def _redis_client():
+    try:
+        from redis import Redis
+
+        return Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=0.8,
+            socket_timeout=0.8,
+        )
+    except Exception:
+        return None
+
+
+def _enforce_redis_rate_limit(key: str, *, limit: int, window_seconds: int, detail: str) -> None:
+    redis_client = _redis_client()
+    if redis_client is None:
+        return
+    try:
+        count = int(redis_client.incr(key))
+        if count == 1:
+            redis_client.expire(key, int(window_seconds))
+    except Exception:
+        return
+    if count > int(limit):
+        raise HTTPException(status_code=429, detail=detail)
+
+
+def _submit_async_task(
+    task_name: str,
+    *,
+    queue: Optional[str] = None,
+    countdown: Optional[int] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
     if not CELERY_AVAILABLE or celery_app is None:
         raise HTTPException(
             status_code=503,
@@ -4519,8 +4579,17 @@ def _submit_async_task(task_name: str, **kwargs: Any) -> Dict[str, Any]:
             )
 
     filtered_kwargs = {key: value for key, value in kwargs.items() if value is not None}
+    task_options: Dict[str, Any] = {}
+    if queue:
+        task_options["queue"] = queue
+    if countdown is not None:
+        task_options["countdown"] = max(0, int(countdown))
     try:
-        async_result = celery_app.send_task(task_name, kwargs=filtered_kwargs)
+        async_result = celery_app.send_task(
+            task_name,
+            kwargs=filtered_kwargs,
+            **task_options,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -4532,6 +4601,7 @@ def _submit_async_task(task_name: str, **kwargs: Any) -> Dict[str, Any]:
         "mode": "async",
         "task_id": async_result.id,
         "task_name": task_name,
+        "queue": queue or "default",
         "status": async_result.status,
     }
 
@@ -4712,6 +4782,18 @@ def _serialize_upload_job(
         "source": job.source,
         "local_task_id": job.local_task_id,
         "ozon_task_id": job.ozon_task_id,
+        "attempt_count": int(job.attempt_count or 0),
+        "max_attempts": int(job.max_attempts or UPLOAD_MAX_ATTEMPTS),
+        "celery_task_id": job.celery_task_id,
+        "locked_at": _format_datetime(job.locked_at),
+        "started_at": _format_datetime(job.started_at),
+        "finished_at": _format_datetime(job.finished_at),
+        "next_attempt_at": _format_datetime(job.next_attempt_at),
+        "last_refreshed_at": _format_datetime(job.last_refreshed_at),
+        "next_refresh_at": _format_datetime(job.next_refresh_at),
+        "cancel_requested": bool(job.cancel_requested),
+        "canceled_at": _format_datetime(job.canceled_at),
+        "timeout_seconds": int(job.timeout_seconds or UPLOAD_TIMEOUT_SECONDS),
         "request_payload": _load_json(job.request_payload) or {},
         "result_payload": _load_json(job.result_payload),
         "error": job.error,
@@ -4947,6 +5029,50 @@ def _validate_upload_items(items: List[Dict[str, Any]]) -> None:
             )
 
 
+RAW_LOCAL_ARTIFACT_KEYS = {
+    "raw_html",
+    "rawHtml",
+    "html",
+    "page_html",
+    "pageHtml",
+    "har",
+    "har_entries",
+    "harEntries",
+    "network_log",
+    "networkLog",
+    "screenshots",
+    "screenshot",
+    "image_package",
+    "imagePackage",
+    "raw_images",
+    "rawImages",
+}
+
+
+def _strip_raw_local_artifacts(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_raw_local_artifacts(item)
+            for key, item in value.items()
+            if key not in RAW_LOCAL_ARTIFACT_KEYS
+        }
+    if isinstance(value, list):
+        return [_strip_raw_local_artifacts(item) for item in value]
+    return value
+
+
+def _sanitize_upload_items_for_cloud(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        cleaned
+        for cleaned in (
+            _strip_raw_local_artifacts(copy.deepcopy(item))
+            for item in items
+            if isinstance(item, dict)
+        )
+        if isinstance(cleaned, dict)
+    ]
+
+
 def _create_upload_job_items(
     db: Session,
     *,
@@ -5062,6 +5188,256 @@ def _update_upload_job_items_from_result(
         row.ozon_product_id = _extract_upload_result_product_id(result_item)
 
 
+def _set_upload_job_items_status(
+    db: Session,
+    job: models.UploadJob,
+    status_value: str,
+    error: Optional[str] = None,
+) -> None:
+    for row in _upload_job_items_for_job(db, job.id):
+        row.status = status_value
+        row.error = error
+
+
+def _upload_retry_delay_seconds(attempt_count: int) -> int:
+    return min(900, 60 * (2 ** max(int(attempt_count or 1) - 1, 0)))
+
+
+def _mark_upload_job_for_retry_or_failed(
+    db: Session,
+    job: models.UploadJob,
+    error: str,
+) -> None:
+    now = datetime.now(timezone.utc)
+    job.locked_at = None
+    job.celery_task_id = None
+    job.error = error
+    if job.cancel_requested:
+        job.status = "canceled"
+        job.canceled_at = now
+        job.finished_at = now
+        _set_upload_job_items_status(db, job, "canceled", error)
+        return
+
+    if int(job.attempt_count or 0) < int(job.max_attempts or UPLOAD_MAX_ATTEMPTS):
+        job.status = "retrying"
+        job.next_attempt_at = now + timedelta(seconds=_upload_retry_delay_seconds(job.attempt_count or 1))
+        _set_upload_job_items_status(db, job, "retrying", error)
+        return
+
+    job.status = "failed"
+    job.finished_at = now
+    _set_upload_job_items_status(db, job, "failed", error)
+
+
+def _active_upload_store_count(db: Session, tenant_id: Optional[int] = None) -> int:
+    query = db.query(func.count(func.distinct(models.UploadJob.store_id))).filter(
+        models.UploadJob.status.in_(UPLOAD_ACTIVE_STATUSES)
+    )
+    if tenant_id is None:
+        query = query.filter(models.UploadJob.tenant_id.is_(None))
+    else:
+        query = query.filter(models.UploadJob.tenant_id == tenant_id)
+    return int(query.scalar() or 0)
+
+
+def _global_active_upload_store_count(db: Session) -> int:
+    return int(
+        db.query(func.count(func.distinct(models.UploadJob.store_id)))
+        .filter(models.UploadJob.status.in_(UPLOAD_ACTIVE_STATUSES))
+        .scalar()
+        or 0
+    )
+
+
+def _store_has_active_upload(db: Session, store_id: int, exclude_job_id: Optional[int] = None) -> bool:
+    query = db.query(models.UploadJob.id).filter(
+        models.UploadJob.store_id == store_id,
+        models.UploadJob.status.in_(UPLOAD_ACTIVE_STATUSES),
+    )
+    if exclude_job_id is not None:
+        query = query.filter(models.UploadJob.id != exclude_job_id)
+    return query.first() is not None
+
+
+def _upload_job_can_dispatch(db: Session, job: models.UploadJob) -> tuple[bool, str]:
+    if job.cancel_requested:
+        return False, "cancel_requested"
+    if _store_has_active_upload(db, job.store_id, exclude_job_id=job.id):
+        return False, "store_upload_active"
+    if _active_upload_store_count(db, job.tenant_id) >= int(settings.UPLOAD_MAX_ACTIVE_STORES_PER_TENANT):
+        return False, "tenant_upload_store_limit"
+    if _global_active_upload_store_count(db) >= int(settings.UPLOAD_MAX_GLOBAL_ACTIVE_STORES):
+        return False, "global_upload_store_limit"
+    return True, "ready"
+
+
+def _acquire_redis_lock(name: str, ttl_seconds: int = 30) -> Optional[str]:
+    redis_client = _redis_client()
+    if redis_client is None:
+        return None
+    token = secrets.token_hex(12)
+    try:
+        acquired = redis_client.set(f"lock:{name}", token, nx=True, ex=int(ttl_seconds))
+    except Exception:
+        return None
+    return token if acquired else ""
+
+
+def _release_redis_lock(name: str, token: Optional[str]) -> None:
+    if not token:
+        return
+    redis_client = _redis_client()
+    if redis_client is None:
+        return
+    lock_key = f"lock:{name}"
+    try:
+        if redis_client.get(lock_key) == token:
+            redis_client.delete(lock_key)
+    except Exception:
+        return
+
+
+def _recover_expired_upload_jobs(db: Session, now: datetime) -> int:
+    candidates = (
+        db.query(models.UploadJob)
+        .filter(models.UploadJob.status.in_({"dispatching", "uploading"}))
+        .filter(models.UploadJob.locked_at.isnot(None))
+        .all()
+    )
+    recovered = 0
+    for job in candidates:
+        locked_at = _as_utc(job.locked_at)
+        timeout_seconds = int(job.timeout_seconds or UPLOAD_TIMEOUT_SECONDS)
+        if locked_at and locked_at + timedelta(seconds=timeout_seconds) > now:
+            continue
+        _mark_upload_job_for_retry_or_failed(db, job, "upload_timeout")
+        recovered += 1
+    if recovered:
+        db.commit()
+    return recovered
+
+
+def dispatch_upload_jobs(limit: int = UPLOAD_DISPATCH_LIMIT) -> Dict[str, Any]:
+    lock_token = _acquire_redis_lock("upload_dispatch", ttl_seconds=30)
+    if lock_token == "":
+        return {"ok": True, "message": "Upload dispatcher already running", "dispatched": 0}
+
+    db = SessionLocal()
+    now = datetime.now(timezone.utc)
+    dispatched = 0
+    skipped: Dict[str, int] = {}
+    recovered = 0
+    try:
+        recovered = _recover_expired_upload_jobs(db, now)
+        candidates = (
+            db.query(models.UploadJob)
+            .filter(models.UploadJob.status.in_(UPLOAD_RETRYABLE_STATUSES))
+            .filter(
+                or_(
+                    models.UploadJob.next_attempt_at.is_(None),
+                    models.UploadJob.next_attempt_at <= now,
+                )
+            )
+            .order_by(models.UploadJob.id.asc())
+            .limit(max(int(limit or 1) * 3, 1))
+            .all()
+        )
+
+        for job in candidates:
+            if dispatched >= int(limit or 1):
+                break
+            can_dispatch, reason = _upload_job_can_dispatch(db, job)
+            if not can_dispatch:
+                if reason == "cancel_requested":
+                    job.status = "canceled"
+                    job.canceled_at = now
+                    job.finished_at = now
+                    _set_upload_job_items_status(db, job, "canceled", "cancel_requested")
+                    db.commit()
+                skipped[reason] = skipped.get(reason, 0) + 1
+                continue
+
+            job.status = "dispatching"
+            job.locked_at = now
+            job.started_at = job.started_at or now
+            job.error = None
+            _set_upload_job_items_status(db, job, "dispatching")
+            db.commit()
+
+            try:
+                queue_result = _submit_async_task(
+                    "ozon.upload_job",
+                    queue="upload",
+                    job_id=job.id,
+                )
+            except HTTPException as exc:
+                job.status = "queue_failed"
+                job.locked_at = None
+                job.error = str(exc.detail or "queue_failed")
+                _set_upload_job_items_status(db, job, "queue_failed", job.error)
+                db.commit()
+                skipped["queue_failed"] = skipped.get("queue_failed", 0) + 1
+                continue
+
+            queue_payload = _load_json(job.result_payload) or {}
+            queue_payload["upload_queue"] = queue_result
+            job.celery_task_id = queue_result.get("task_id")
+            job.result_payload = json.dumps(queue_payload, ensure_ascii=False)
+            db.commit()
+            dispatched += 1
+
+        return {
+            "ok": True,
+            "message": f"Dispatched {dispatched} upload job(s)",
+            "dispatched": dispatched,
+            "recovered": recovered,
+            "skipped": skipped,
+            "active_global_stores": _global_active_upload_store_count(db),
+        }
+    finally:
+        db.close()
+        _release_redis_lock("upload_dispatch", lock_token)
+
+
+def poll_upload_jobs(limit: int = 200) -> Dict[str, Any]:
+    lock_token = _acquire_redis_lock("upload_poll", ttl_seconds=80)
+    if lock_token == "":
+        return {"ok": True, "message": "Upload poller already running", "processed": 0}
+
+    db = SessionLocal()
+    now = datetime.now(timezone.utc)
+    try:
+        jobs = (
+            db.query(models.UploadJob.id)
+            .filter(models.UploadJob.status.in_({"submitted", "processing"}))
+            .filter(
+                or_(
+                    models.UploadJob.next_refresh_at.is_(None),
+                    models.UploadJob.next_refresh_at <= now,
+                    models.UploadJob.cancel_requested.is_(True),
+                )
+            )
+            .order_by(models.UploadJob.id.asc())
+            .limit(max(int(limit or 1), 1))
+            .all()
+        )
+        job_ids = [row[0] for row in jobs]
+    finally:
+        db.close()
+
+    try:
+        results = [run_refresh_upload_job(job_id) for job_id in job_ids]
+        return {
+            "ok": True,
+            "message": f"Polled {len(results)} upload job(s)",
+            "processed": len(results),
+            "results": results,
+        }
+    finally:
+        _release_redis_lock("upload_poll", lock_token)
+
+
 async def _submit_upload_job(
     *,
     db: Session,
@@ -5073,13 +5449,14 @@ async def _submit_upload_job(
     requested_store_name: Optional[str] = None,
     extension_meta: Optional[Dict[str, Any]] = None,
 ) -> models.UploadJob:
+    cloud_items = _sanitize_upload_items_for_cloud(items)
     request_payload: Dict[str, Any] = {
         "store_id": store.id,
         "requested_store_id": requested_store_id,
         "requested_store_name": requested_store_name,
         "local_task_id": local_task_id,
         "source": source,
-        "items": items,
+        "items": cloud_items,
     }
     if extension_meta:
         request_payload["extension_meta"] = extension_meta
@@ -5088,21 +5465,24 @@ async def _submit_upload_job(
         tenant_id=store.tenant_id,
         store_id=store.id,
         status="queued",
-        item_count=len(items),
+        item_count=len(cloud_items),
         source=source,
         local_task_id=local_task_id,
         request_payload=json.dumps(request_payload, ensure_ascii=False),
+        max_attempts=UPLOAD_MAX_ATTEMPTS,
+        timeout_seconds=UPLOAD_TIMEOUT_SECONDS,
+        next_attempt_at=datetime.now(timezone.utc),
     )
     db.add(job)
     db.commit()
     db.refresh(job)
-    _create_upload_job_items(db, job=job, items=items)
+    _create_upload_job_items(db, job=job, items=cloud_items)
     db.commit()
     db.refresh(job)
     item_rows = _upload_job_items_for_job(db, job.id)
 
     try:
-        queue_result = _submit_async_task("ozon.upload_job", job_id=job.id)
+        queue_result = _submit_async_task("ozon.dispatch_upload_jobs", queue="upload")
     except HTTPException as exc:
         job.status = "queue_failed"
         job.error = str(exc.detail or "queue_failed")
@@ -5112,7 +5492,7 @@ async def _submit_upload_job(
         db.commit()
         raise
 
-    job.result_payload = json.dumps({"queue": queue_result}, ensure_ascii=False)
+    job.result_payload = json.dumps({"dispatcher_queue": queue_result}, ensure_ascii=False)
     db.commit()
     db.refresh(job)
     return job
@@ -5166,16 +5546,24 @@ def run_upload_job(job_id: int) -> Dict[str, Any]:
         job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
         if not job:
             return {"ok": False, "message": "Upload job not found", "job_id": job_id}
-        if job.status in {
-            "uploading",
-            "submitted",
-            "processing",
-            "completed",
-            "completed_with_errors",
-        }:
+        if job.status in UPLOAD_TERMINAL_STATUSES or job.status in {"uploading", "submitted", "processing"}:
             return {
                 "ok": True,
                 "message": "Upload job is already running or submitted",
+                "job_id": job.id,
+                "status": job.status,
+            }
+        if job.cancel_requested:
+            now = datetime.now(timezone.utc)
+            job.status = "canceled"
+            job.canceled_at = now
+            job.finished_at = now
+            job.locked_at = None
+            _set_upload_job_items_status(db, job, "canceled", "cancel_requested")
+            db.commit()
+            return {
+                "ok": True,
+                "message": "Upload job canceled before execution",
                 "job_id": job.id,
                 "status": job.status,
             }
@@ -5187,8 +5575,12 @@ def run_upload_job(job_id: int) -> Dict[str, Any]:
         if not items:
             raise ValueError("Upload job has no item payloads")
 
+        now = datetime.now(timezone.utc)
         job.status = "uploading"
         job.error = None
+        job.locked_at = now
+        job.started_at = job.started_at or now
+        job.attempt_count = int(job.attempt_count or 0) + 1
         for item_row in _upload_job_items_for_job(db, job.id):
             item_row.status = "uploading"
             item_row.error = None
@@ -5203,13 +5595,19 @@ def run_upload_job(job_id: int) -> Dict[str, Any]:
             job.ozon_task_id = str(task_id) if task_id is not None else None
             job.status = "submitted"
             job.error = None
+            job.locked_at = None
+            job.next_attempt_at = None
+            job.next_refresh_at = datetime.now(timezone.utc) + timedelta(
+                seconds=UPLOAD_RESULT_POLL_INTERVAL_SECONDS
+            )
             item_default_status = "submitted"
             item_default_error = None
         else:
-            job.status = "submit_failed"
-            job.error = upload_result.get("error", "upload_failed")
-            item_default_status = "submit_failed"
-            item_default_error = job.error
+            upload_error = str(upload_result.get("error") or "upload_failed")
+            job.result_payload = json.dumps(upload_result, ensure_ascii=False)
+            _mark_upload_job_for_retry_or_failed(db, job, upload_error)
+            item_default_status = job.status
+            item_default_error = upload_error
 
         _update_upload_job_items_from_result(
             db,
@@ -5239,13 +5637,15 @@ def run_upload_job(job_id: int) -> Dict[str, Any]:
         db.rollback()
         failed_job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
         if failed_job:
-            failed_job.status = "submit_failed"
-            failed_job.error = str(exc)
-            for item_row in _upload_job_items_for_job(db, failed_job.id):
-                item_row.status = "submit_failed"
-                item_row.error = str(exc)
+            _mark_upload_job_for_retry_or_failed(db, failed_job, str(exc))
             db.commit()
-        raise
+            return {
+                "ok": False,
+                "message": str(exc),
+                "job_id": failed_job.id,
+                "status": failed_job.status,
+            }
+        return {"ok": False, "message": str(exc), "job_id": job_id}
     finally:
         db.close()
 
@@ -5256,6 +5656,27 @@ def run_refresh_upload_job(job_id: int) -> Dict[str, Any]:
         job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
         if not job:
             return {"ok": False, "message": "Upload job not found", "job_id": job_id}
+        if job.status in UPLOAD_TERMINAL_STATUSES:
+            return {
+                "ok": True,
+                "message": "Upload job already finished",
+                "job_id": job.id,
+                "status": job.status,
+            }
+        if job.cancel_requested:
+            now = datetime.now(timezone.utc)
+            job.status = "canceled"
+            job.canceled_at = now
+            job.finished_at = now
+            job.next_refresh_at = None
+            _set_upload_job_items_status(db, job, "canceled", "cancel_requested")
+            db.commit()
+            return {
+                "ok": True,
+                "message": "Upload job canceled",
+                "job_id": job.id,
+                "status": job.status,
+            }
         if not job.ozon_task_id:
             return {
                 "ok": False,
@@ -5269,9 +5690,16 @@ def run_refresh_upload_job(job_id: int) -> Dict[str, Any]:
             raise ValueError("Store not found for upload job")
 
         result = asyncio.run(get_upload_task_info(store.client_id, store.api_key, int(job.ozon_task_id)))
+        now = datetime.now(timezone.utc)
         job.result_payload = json.dumps(result, ensure_ascii=False)
         job.status = _derive_upload_status(result)
         job.error = None if result.get("ok") else result.get("error", "status_refresh_failed")
+        job.last_refreshed_at = now
+        if job.status in UPLOAD_TERMINAL_STATUSES:
+            job.finished_at = now
+            job.next_refresh_at = None
+        else:
+            job.next_refresh_at = now + timedelta(seconds=UPLOAD_RESULT_POLL_INTERVAL_SECONDS)
 
         _update_upload_job_items_from_result(
             db,
@@ -5387,12 +5815,14 @@ def run_refresh_analytics(
 def _extension_public_status(job: models.UploadJob) -> str:
     if job.status in {"queue_failed", "submit_failed", "failed", "completed_with_errors"}:
         return "failed"
-    if job.status in {"created", "queued"}:
+    if job.status in {"created", "queued", "retrying"}:
         return "queued"
-    if job.status in {"uploading", "submitted", "processing"}:
+    if job.status in {"dispatching", "uploading", "submitted", "processing"}:
         return "uploading"
     if job.status in {"completed"}:
         return "uploaded"
+    if job.status in {"canceled"}:
+        return "failed"
     return "uploading"
 
 
@@ -7358,6 +7788,13 @@ def _sync_schedule_next_run(interval_minutes: int, base: Optional[datetime] = No
     return base_time + timedelta(minutes=safe_interval)
 
 
+def _normalize_sync_interval(job_type: str, interval_minutes: int) -> int:
+    safe_interval = max(int(interval_minutes or 60), 5)
+    if job_type == "sync_orders":
+        return max(safe_interval, ORDER_SYNC_INTERVAL_MINUTES)
+    return safe_interval
+
+
 def _get_admin_store_for_tenant(
     db: Session,
     tenant_id: int,
@@ -7795,6 +8232,40 @@ def admin_clear_cache(
     return {"cleared_scope": cleared_scope, **_admin_cache_status()}
 
 
+@app.post(
+    f"{settings.API_V1_STR}/admin/cache/sync-seller-analytics",
+    response_model=schemas.AsyncTaskSubmitResponse,
+)
+def admin_sync_seller_analytics_cache(
+    payload: schemas.AdminSellerAnalyticsSyncRequest,
+    request: Request,
+    _: models.User = Depends(_require_super_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    if payload.tenant_id is not None:
+        _get_admin_tenant_or_404(db, payload.tenant_id)
+    if payload.store_id is not None and payload.tenant_id is not None:
+        _get_admin_store_for_tenant(db, payload.tenant_id, payload.store_id)
+    result = _submit_async_task(
+        "ozon.refresh_analytics",
+        queue="sync",
+        tenant_id=payload.tenant_id,
+        store_id=payload.store_id,
+        days=payload.days,
+    )
+    _write_audit_log(
+        db,
+        request,
+        "admin.cache.sync_seller_analytics",
+        "cache",
+        "seller_analytics",
+        {"task_id": result.get("task_id"), "tenant_id": payload.tenant_id, "store_id": payload.store_id},
+        tenant_id=payload.tenant_id,
+    )
+    db.commit()
+    return result
+
+
 @app.get(
     f"{settings.API_V1_STR}/admin/sync-schedules",
     response_model=List[schemas.AdminSyncScheduleResponse],
@@ -7827,6 +8298,7 @@ def admin_create_sync_schedule(
     tenant = _get_admin_tenant_or_404(db, payload.tenant_id)
     store = _get_admin_store_for_tenant(db, tenant.id, payload.store_id)
     job_type = _normalize_sync_job_type(payload.job_type)
+    interval_minutes = _normalize_sync_interval(job_type, payload.interval_minutes)
     schedule_name = str(payload.name or "").strip() or SYNC_JOB_TYPES[job_type]
     schedule = models.SyncSchedule(
         tenant_id=tenant.id,
@@ -7834,10 +8306,10 @@ def admin_create_sync_schedule(
         name=schedule_name,
         job_type=job_type,
         enabled=payload.enabled,
-        interval_minutes=payload.interval_minutes,
+        interval_minutes=interval_minutes,
         days=payload.days,
         next_run_at=payload.next_run_at
-        or _sync_schedule_next_run(payload.interval_minutes),
+        or _sync_schedule_next_run(interval_minutes),
         last_status="idle",
     )
     db.add(schedule)
@@ -7893,7 +8365,15 @@ def admin_update_sync_schedule(
     if "enabled" in update_data:
         schedule.enabled = bool(update_data["enabled"])
     if "interval_minutes" in update_data and update_data["interval_minutes"] is not None:
-        schedule.interval_minutes = int(update_data["interval_minutes"])
+        schedule.interval_minutes = _normalize_sync_interval(
+            schedule.job_type,
+            int(update_data["interval_minutes"]),
+        )
+    else:
+        schedule.interval_minutes = _normalize_sync_interval(
+            schedule.job_type,
+            schedule.interval_minutes,
+        )
     if "days" in update_data and update_data["days"] is not None:
         schedule.days = int(update_data["days"])
     if "next_run_at" in update_data:
@@ -7930,6 +8410,7 @@ def admin_run_sync_schedule(
         raise HTTPException(status_code=404, detail="Sync schedule not found")
     result = _submit_async_task(
         "ozon.run_sync_schedule",
+        queue="sync",
         schedule_id=schedule.id,
         triggered_by=_current_username(request),
     )
@@ -7966,6 +8447,147 @@ def admin_list_sync_runs(
         query = query.filter(models.SyncRun.schedule_id == schedule_id)
     runs = query.order_by(models.SyncRun.id.desc()).limit(limit).all()
     return [_serialize_sync_run(db, run) for run in runs]
+
+
+@app.get(
+    f"{settings.API_V1_STR}/admin/task-monitor",
+    response_model=schemas.AdminTaskMonitorResponse,
+)
+def admin_task_monitor(
+    _: models.User = Depends(_require_super_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    upload_counts = [
+        {"status": status_value or "unknown", "count": int(count or 0)}
+        for status_value, count in (
+            db.query(models.UploadJob.status, func.count(models.UploadJob.id))
+            .group_by(models.UploadJob.status)
+            .order_by(models.UploadJob.status.asc())
+            .all()
+        )
+    ]
+    sync_counts = [
+        {"status": status_value or "unknown", "count": int(count or 0)}
+        for status_value, count in (
+            db.query(models.SyncRun.status, func.count(models.SyncRun.id))
+            .group_by(models.SyncRun.status)
+            .order_by(models.SyncRun.status.asc())
+            .all()
+        )
+    ]
+    recent_upload_jobs = (
+        db.query(models.UploadJob)
+        .order_by(models.UploadJob.id.desc())
+        .limit(50)
+        .all()
+    )
+    store_names = _store_name_map(db, [job.store_id for job in recent_upload_jobs])
+    items_by_job = _upload_job_items_by_job_ids(db, [job.id for job in recent_upload_jobs])
+    recent_sync_runs = (
+        db.query(models.SyncRun)
+        .order_by(models.SyncRun.id.desc())
+        .limit(50)
+        .all()
+    )
+    upload_queue_backlog = int(
+        db.query(func.count(models.UploadJob.id))
+        .filter(models.UploadJob.status.in_({"queued", "retrying", "queue_failed"}))
+        .scalar()
+        or 0
+    )
+    return {
+        "upload_status_counts": upload_counts,
+        "upload_active_global_stores": _global_active_upload_store_count(db),
+        "upload_queue_backlog": upload_queue_backlog,
+        "recent_upload_jobs": [
+            _serialize_upload_job(
+                job,
+                store_names.get(job.store_id),
+                items_by_job.get(job.id, []),
+            )
+            for job in recent_upload_jobs
+        ],
+        "sync_status_counts": sync_counts,
+        "recent_sync_runs": [_serialize_sync_run(db, run) for run in recent_sync_runs],
+    }
+
+
+@app.get(
+    f"{settings.API_V1_STR}/admin/system-alerts",
+    response_model=List[schemas.AdminSystemAlertResponse],
+)
+def admin_system_alerts(
+    _: models.User = Depends(_require_super_admin),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    recent_total = int(
+        db.query(func.count(models.UploadJob.id))
+        .filter(models.UploadJob.created_at >= since)
+        .scalar()
+        or 0
+    )
+    recent_failed = int(
+        db.query(func.count(models.UploadJob.id))
+        .filter(models.UploadJob.created_at >= since)
+        .filter(
+            models.UploadJob.status.in_(
+                {"failed", "submit_failed", "queue_failed", "completed_with_errors"}
+            )
+        )
+        .scalar()
+        or 0
+    )
+    error_total = int(
+        db.query(func.count(models.UploadJob.id))
+        .filter(models.UploadJob.created_at >= since)
+        .filter(models.UploadJob.error.isnot(None))
+        .scalar()
+        or 0
+    )
+    queue_backlog = int(
+        db.query(func.count(models.UploadJob.id))
+        .filter(models.UploadJob.status.in_({"queued", "retrying", "queue_failed"}))
+        .scalar()
+        or 0
+    )
+    failure_rate = float(recent_failed / recent_total) if recent_total else 0.0
+    api_error_rate = float(error_total / recent_total) if recent_total else 0.0
+    backlog_threshold = float(max(int(settings.UPLOAD_MAX_GLOBAL_ACTIVE_STORES) * 4, 96))
+    return [
+        {
+            "code": "upload_failure_rate",
+            "severity": "critical" if failure_rate >= 0.2 else "warning" if failure_rate >= 0.1 else "info",
+            "status": "alert" if failure_rate >= 0.1 else "ok",
+            "message": "上传失败率超过阈值" if failure_rate >= 0.1 else "上传失败率正常",
+            "value": round(failure_rate, 4),
+            "threshold": 0.1,
+        },
+        {
+            "code": "ozon_api_error_rate",
+            "severity": "critical" if api_error_rate >= 0.2 else "warning" if api_error_rate >= 0.1 else "info",
+            "status": "alert" if api_error_rate >= 0.1 else "ok",
+            "message": "Ozon API 错误率超过阈值" if api_error_rate >= 0.1 else "Ozon API 错误率正常",
+            "value": round(api_error_rate, 4),
+            "threshold": 0.1,
+        },
+        {
+            "code": "upload_queue_backlog",
+            "severity": "warning" if queue_backlog >= backlog_threshold else "info",
+            "status": "alert" if queue_backlog >= backlog_threshold else "ok",
+            "message": "上传队列堆积超过阈值" if queue_backlog >= backlog_threshold else "上传队列堆积正常",
+            "value": float(queue_backlog),
+            "threshold": backlog_threshold,
+        },
+        {
+            "code": "db_slow_query",
+            "severity": "info",
+            "status": "unknown",
+            "message": "慢查询告警需要接入 RDS Performance Insights 或 PostgreSQL pg_stat_statements。",
+            "value": None,
+            "threshold": None,
+        },
+    ]
 
 
 @app.post(
@@ -8900,6 +9522,7 @@ def cloud_follow_submit_async(
     store = _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.cloud_follow_submit",
+        queue="browser",
         store_id=store.id,
         user_owner=username,
         tenant_id=tenant_id,
@@ -9142,18 +9765,104 @@ async def refresh_upload_job(
             detail="Upload job has no Ozon task id to refresh",
         )
 
-    queue_result = _submit_async_task("ozon.refresh_upload_job", job_id=job.id)
-    queue_payload = _load_json(job.result_payload) or {}
-    queue_payload["refresh_queue"] = queue_result
-    job.result_payload = json.dumps(queue_payload, ensure_ascii=False)
-    db.commit()
-    db.refresh(job)
+    now = datetime.now(timezone.utc)
+    next_refresh_at = _as_utc(job.next_refresh_at)
+    if next_refresh_at is None or next_refresh_at <= now or job.cancel_requested:
+        queue_result = _submit_async_task("ozon.refresh_upload_job", queue="upload", job_id=job.id)
+        queue_payload = _load_json(job.result_payload) or {}
+        queue_payload["refresh_queue"] = queue_result
+        job.result_payload = json.dumps(queue_payload, ensure_ascii=False)
+        job.next_refresh_at = now + timedelta(seconds=UPLOAD_RESULT_POLL_INTERVAL_SECONDS)
+        db.commit()
+        db.refresh(job)
     store = _resolve_store(db, job.store_id, username=username)
     return _serialize_upload_job(
         job,
         store.store_name,
         _upload_job_items_for_job(db, job.id),
     )
+
+
+@app.post(
+    f"{settings.API_V1_STR}/upload/jobs/{{job_id}}/cancel",
+    response_model=schemas.UploadJobResponse,
+)
+def cancel_upload_job(
+    job_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    job = (
+        _scope_query_to_user_stores(
+            db.query(models.UploadJob), models.UploadJob.store_id, db, username
+        )
+        .filter(models.UploadJob.id == job_id)
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    now = datetime.now(timezone.utc)
+    job.cancel_requested = True
+    if job.status not in {"uploading", "submitted", "processing"}:
+        job.status = "canceled"
+        job.canceled_at = now
+        job.finished_at = now
+        job.locked_at = None
+        _set_upload_job_items_status(db, job, "canceled", "cancel_requested")
+    if job.celery_task_id and CELERY_AVAILABLE and celery_app is not None:
+        try:
+            celery_app.control.revoke(job.celery_task_id, terminate=False)
+        except Exception:
+            pass
+    db.commit()
+    db.refresh(job)
+    store = _resolve_store(db, job.store_id, username=username)
+    return _serialize_upload_job(job, store.store_name, _upload_job_items_for_job(db, job.id))
+
+
+@app.post(
+    f"{settings.API_V1_STR}/upload/jobs/{{job_id}}/resume",
+    response_model=schemas.UploadJobResponse,
+)
+def resume_upload_job(
+    job_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    job = (
+        _scope_query_to_user_stores(
+            db.query(models.UploadJob), models.UploadJob.store_id, db, username
+        )
+        .filter(models.UploadJob.id == job_id)
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    if job.status not in {"failed", "submit_failed", "queue_failed", "retrying", "canceled"}:
+        raise HTTPException(status_code=400, detail="Only failed, canceled, or retrying upload jobs can be resumed")
+
+    job.status = "queued"
+    job.cancel_requested = False
+    job.canceled_at = None
+    job.finished_at = None
+    job.locked_at = None
+    job.celery_task_id = None
+    job.error = None
+    job.next_attempt_at = datetime.now(timezone.utc)
+    _set_upload_job_items_status(db, job, "queued")
+    db.commit()
+    db.refresh(job)
+    queue_result = _submit_async_task("ozon.dispatch_upload_jobs", queue="upload")
+    queue_payload = _load_json(job.result_payload) or {}
+    queue_payload["resume_dispatcher_queue"] = queue_result
+    job.result_payload = json.dumps(queue_payload, ensure_ascii=False)
+    db.commit()
+    db.refresh(job)
+    store = _resolve_store(db, job.store_id, username=username)
+    return _serialize_upload_job(job, store.store_name, _upload_job_items_for_job(db, job.id))
 
 
 @app.get(
@@ -9323,6 +10032,7 @@ def submit_verify_stores_task(
         _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.verify_stores",
+        queue="sync",
         store_id=payload.store_id,
         user_owner=username,
         tenant_id=tenant_id,
@@ -9344,6 +10054,7 @@ def submit_sync_products_task(
         _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.sync_products",
+        queue="sync",
         store_id=payload.store_id,
         user_owner=username,
         tenant_id=tenant_id,
@@ -9361,10 +10072,18 @@ def submit_sync_orders_task(
 ) -> Dict[str, Any]:
     username = _current_username(request)
     tenant_id = _current_tenant_id(request)
+    rate_key = f"manual_order_sync:{tenant_id or username}"
+    _enforce_redis_rate_limit(
+        rate_key,
+        limit=int(settings.MANUAL_ORDER_SYNC_LIMIT),
+        window_seconds=int(settings.MANUAL_ORDER_SYNC_WINDOW_SECONDS),
+        detail="操作过于频繁：订单手动同步每个用户半小时最多 5 次。",
+    )
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.sync_orders",
+        queue="sync",
         store_id=payload.store_id,
         days=payload.days,
         user_owner=username,
@@ -9388,6 +10107,7 @@ def submit_sync_browser_warehouses_task(
     _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.sync_browser_warehouses",
+        queue="browser",
         store_id=payload.store_id,
         user_owner=username,
         tenant_id=tenant_id,
@@ -9406,6 +10126,7 @@ def submit_sync_core_task(
     tenant_id = _current_tenant_id(request)
     return _submit_async_task(
         "ozon.sync_core",
+        queue="sync",
         days=payload.days,
         user_owner=username,
         tenant_id=tenant_id,
@@ -9427,6 +10148,7 @@ def submit_refresh_analytics_task(
         _resolve_store(db, payload.store_id, username=username)
     return _submit_async_task(
         "ozon.refresh_analytics",
+        queue="sync",
         store_id=payload.store_id,
         days=payload.days,
         user_owner=username,
@@ -9458,6 +10180,7 @@ async def sync_products(
         _resolve_store(db, store_id, username=username)
     return _submit_async_task(
         "ozon.sync_products",
+        queue="sync",
         store_id=store_id,
         user_owner=username,
         tenant_id=tenant_id,

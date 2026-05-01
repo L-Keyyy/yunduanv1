@@ -20,11 +20,38 @@ celery_app.conf.update(
     timezone="UTC",
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    task_routes={
+        "ozon.upload_job": {"queue": "upload"},
+        "ozon.dispatch_upload_jobs": {"queue": "upload"},
+        "ozon.poll_upload_jobs": {"queue": "upload"},
+        "ozon.refresh_upload_job": {"queue": "upload"},
+        "ozon.cloud_follow_submit": {"queue": "browser"},
+        "ozon.sync_browser_warehouses": {"queue": "browser"},
+        "ozon.sync_products": {"queue": "sync"},
+        "ozon.sync_orders": {"queue": "sync"},
+        "ozon.sync_core": {"queue": "sync"},
+        "ozon.verify_stores": {"queue": "sync"},
+        "ozon.run_sync_schedule": {"queue": "sync"},
+        "ozon.run_due_schedules": {"queue": "sync"},
+        "ozon.refresh_analytics": {"queue": "sync"},
+    },
     beat_schedule={
         "run-due-sync-schedules-every-minute": {
             "task": "ozon.run_due_schedules",
             "schedule": 60.0,
             "kwargs": {"limit": 20},
+        },
+        "dispatch-upload-jobs-every-15-seconds": {
+            "task": "ozon.dispatch_upload_jobs",
+            "schedule": 15.0,
+            "kwargs": {"limit": settings.UPLOAD_MAX_GLOBAL_ACTIVE_STORES},
+            "options": {"queue": "upload"},
+        },
+        "poll-upload-jobs-every-90-seconds": {
+            "task": "ozon.poll_upload_jobs",
+            "schedule": float(settings.UPLOAD_RESULT_POLL_INTERVAL_SECONDS),
+            "kwargs": {"limit": 200},
+            "options": {"queue": "upload"},
         },
     },
 )

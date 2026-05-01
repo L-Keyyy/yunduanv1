@@ -42,6 +42,27 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     CELERY_BROKER_URL: str = REDIS_URL
     CELERY_RESULT_BACKEND: str = REDIS_URL
+    UPLOAD_MAX_ACTIVE_STORES_PER_TENANT: int = int(
+        os.getenv("UPLOAD_MAX_ACTIVE_STORES_PER_TENANT", "2")
+    )
+    UPLOAD_MAX_GLOBAL_ACTIVE_STORES: int = int(
+        os.getenv("UPLOAD_MAX_GLOBAL_ACTIVE_STORES", "48")
+    )
+    UPLOAD_MAX_ATTEMPTS: int = int(os.getenv("UPLOAD_MAX_ATTEMPTS", "3"))
+    UPLOAD_TIMEOUT_SECONDS: int = int(os.getenv("UPLOAD_TIMEOUT_SECONDS", "900"))
+    UPLOAD_RESULT_POLL_INTERVAL_SECONDS: int = int(
+        os.getenv("UPLOAD_RESULT_POLL_INTERVAL_SECONDS", "90")
+    )
+    MANUAL_ORDER_SYNC_LIMIT: int = int(os.getenv("MANUAL_ORDER_SYNC_LIMIT", "5"))
+    MANUAL_ORDER_SYNC_WINDOW_SECONDS: int = int(
+        os.getenv("MANUAL_ORDER_SYNC_WINDOW_SECONDS", "1800")
+    )
+    ORDER_SYNC_INTERVAL_MINUTES: int = int(
+        os.getenv("ORDER_SYNC_INTERVAL_MINUTES", "120")
+    )
+    SELLER_ANALYTICS_CACHE_TTL_SECONDS: int = int(
+        os.getenv("SELLER_ANALYTICS_CACHE_TTL_SECONDS", str(3 * 24 * 60 * 60))
+    )
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-super-secret-key-here")
     FIELD_ENCRYPTION_KEY: str = os.getenv("FIELD_ENCRYPTION_KEY", "")

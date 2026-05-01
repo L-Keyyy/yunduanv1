@@ -261,6 +261,12 @@ class AdminCacheClearResponse(AdminCacheStatusResponse):
     cleared_scope: str
 
 
+class AdminSellerAnalyticsSyncRequest(BaseModel):
+    tenant_id: Optional[int] = None
+    store_id: Optional[int] = None
+    days: int = Field(default=7, ge=1, le=365)
+
+
 class UploadJobCreate(BaseModel):
     store_id: Optional[int] = None
     store_name: Optional[str] = None
@@ -294,6 +300,18 @@ class UploadJobResponse(BaseModel):
     source: Optional[str] = None
     local_task_id: Optional[str] = None
     ozon_task_id: Optional[str] = None
+    attempt_count: int = 0
+    max_attempts: int = 3
+    celery_task_id: Optional[str] = None
+    locked_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    next_attempt_at: Optional[datetime] = None
+    last_refreshed_at: Optional[datetime] = None
+    next_refresh_at: Optional[datetime] = None
+    cancel_requested: bool = False
+    canceled_at: Optional[datetime] = None
+    timeout_seconds: int = 900
     request_payload: Dict[str, Any]
     result_payload: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -757,6 +775,7 @@ class AsyncTaskSubmitResponse(BaseModel):
     mode: str = "async"
     task_id: str
     task_name: str
+    queue: Optional[str] = None
     status: str
 
 
@@ -798,7 +817,7 @@ class AdminSyncScheduleCreateRequest(BaseModel):
     name: str
     job_type: str
     enabled: bool = True
-    interval_minutes: int = Field(default=60, ge=5)
+    interval_minutes: int = Field(default=120, ge=5)
     days: int = Field(default=7, ge=1, le=90)
     next_run_at: Optional[datetime] = None
 
@@ -830,6 +849,29 @@ class AdminSyncRunResponse(BaseModel):
     result_payload: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class AdminTaskMonitorStatusCount(BaseModel):
+    status: str
+    count: int
+
+
+class AdminTaskMonitorResponse(BaseModel):
+    upload_status_counts: List[AdminTaskMonitorStatusCount]
+    upload_active_global_stores: int
+    upload_queue_backlog: int
+    recent_upload_jobs: List[UploadJobResponse]
+    sync_status_counts: List[AdminTaskMonitorStatusCount]
+    recent_sync_runs: List[AdminSyncRunResponse]
+
+
+class AdminSystemAlertResponse(BaseModel):
+    code: str
+    severity: str
+    status: str
+    message: str
+    value: Optional[float] = None
+    threshold: Optional[float] = None
 
 
 class SyncCoreRequest(BaseModel):

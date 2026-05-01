@@ -183,6 +183,9 @@
                 <el-option label="商品市场缓存" value="product_market" />
               </el-select>
               <el-button type="warning" :loading="submitting" @click="clearCache">清理缓存</el-button>
+              <el-button type="primary" :loading="submitting" @click="syncSellerAnalyticsCache">
+                同步 Seller 分析缓存
+              </el-button>
             </div>
           </div>
           <section class="cache-grid">
@@ -191,6 +194,82 @@
               <strong>{{ item.value }}</strong>
             </article>
           </section>
+        </el-tab-pane>
+
+        <el-tab-pane label="任务监控" name="taskMonitor">
+          <div class="table-toolbar">
+            <h2>任务队列与系统告警</h2>
+            <div class="toolbar-actions">
+              <el-tag type="info">全局上传店铺：{{ taskMonitor?.upload_active_global_stores ?? 0 }}</el-tag>
+              <el-tag :type="(taskMonitor?.upload_queue_backlog ?? 0) > 96 ? 'warning' : 'success'">
+                上传排队：{{ taskMonitor?.upload_queue_backlog ?? 0 }}
+              </el-tag>
+              <el-button @click="loadTaskMonitor">刷新监控</el-button>
+            </div>
+          </div>
+
+          <section class="cache-grid">
+            <article v-for="item in uploadStatusCards" :key="`upload-${item.label}`" class="cache-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </article>
+            <article v-for="item in syncStatusCards" :key="`sync-${item.label}`" class="cache-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </article>
+          </section>
+
+          <el-alert
+            v-for="alert in systemAlerts"
+            :key="alert.code"
+            class="admin-alert"
+            :type="alert.status === 'alert' ? (alert.severity === 'critical' ? 'error' : 'warning') : 'info'"
+            :closable="false"
+            show-icon
+            :title="`${alert.code}: ${alert.message}`"
+          />
+
+          <div class="table-toolbar sub-toolbar">
+            <h2>最近上传任务</h2>
+          </div>
+          <el-table v-loading="loading" :data="taskMonitor?.recent_upload_jobs || []" border>
+            <el-table-column prop="id" label="ID" width="80" />
+            <el-table-column prop="store_name" label="店铺" min-width="150" />
+            <el-table-column prop="status" label="状态" width="130">
+              <template #default="{ row }">
+                <el-tag :type="taskStatusTag(row.status)">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="item_count" label="SKU" width="80" />
+            <el-table-column label="重试" width="100">
+              <template #default="{ row }">{{ row.attempt_count }}/{{ row.max_attempts }}</template>
+            </el-table-column>
+            <el-table-column prop="next_refresh_at" label="下次轮询" width="180">
+              <template #default="{ row }">{{ formatDate(row.next_refresh_at) }}</template>
+            </el-table-column>
+            <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
+          </el-table>
+
+          <div class="table-toolbar sub-toolbar">
+            <h2>最近同步任务</h2>
+          </div>
+          <el-table v-loading="loading" :data="taskMonitor?.recent_sync_runs || []" border>
+            <el-table-column prop="id" label="ID" width="80" />
+            <el-table-column prop="tenant_name" label="客户" min-width="150" />
+            <el-table-column label="任务" width="130">
+              <template #default="{ row }">{{ jobTypeLabel(row.job_type) }}</template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="taskStatusTag(row.status)">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="triggered_by" label="触发" width="120" />
+            <el-table-column prop="started_at" label="开始" width="180">
+              <template #default="{ row }">{{ formatDate(row.started_at) }}</template>
+            </el-table-column>
+            <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
+          </el-table>
         </el-tab-pane>
 
         <el-tab-pane label="同步计划" name="syncSchedules">
@@ -479,11 +558,14 @@ import {
   fetchAdminOverview,
   fetchAdminPermissions,
   fetchAdminRoles,
+  fetchAdminSystemAlerts,
+  fetchAdminTaskMonitor,
   fetchAdminSyncRuns,
   fetchAdminSyncSchedules,
   fetchAdminTenants,
   fetchAdminUsers,
   runAdminSyncSchedule,
+  syncAdminSellerAnalyticsCache,
   updateAdminSyncSchedule,
   updateAdminTenant,
   updateAdminUser,
@@ -494,9 +576,11 @@ import {
   type AdminOverview,
   type AdminPermission,
   type AdminRole,
+  type AdminSystemAlert,
   type AdminSyncRun,
   type AdminSyncSchedule,
   type AdminSyncSchedulePayload,
+  type AdminTaskMonitor,
   type AdminTenant,
   type AdminTenantPayload,
   type AdminUser,
@@ -521,6 +605,8 @@ const loginLogs = ref<AdminLoginLog[]>([])
 const cacheStatus = ref<AdminCacheStatus | null>(null)
 const syncSchedules = ref<AdminSyncSchedule[]>([])
 const syncRuns = ref<AdminSyncRun[]>([])
+const taskMonitor = ref<AdminTaskMonitor | null>(null)
+const systemAlerts = ref<AdminSystemAlert[]>([])
 const cacheScope = ref('all')
 const userTenantFilter = ref<number | undefined>()
 const userSearch = ref('')
@@ -561,7 +647,7 @@ const scheduleForm = reactive<AdminSyncSchedulePayload>({
   name: '',
   job_type: 'sync_orders',
   enabled: true,
-  interval_minutes: 60,
+  interval_minutes: 120,
   days: 7,
 })
 
@@ -571,6 +657,7 @@ const navItems = [
   { name: 'roles', label: '权限' },
   { name: 'menus', label: '菜单' },
   { name: 'cache', label: '缓存' },
+  { name: 'taskMonitor', label: '任务监控' },
   { name: 'syncSchedules', label: '同步计划' },
   { name: 'loginLogs', label: '登录日志' },
   { name: 'auditLogs', label: '审计日志' },
@@ -594,6 +681,20 @@ const cacheCards = computed(() => [
   { label: '商品市场数据', value: cacheStatus.value?.seller_product_market_entries ?? 0 },
 ])
 
+const uploadStatusCards = computed(() =>
+  (taskMonitor.value?.upload_status_counts || []).map((item) => ({
+    label: `上传 ${item.status}`,
+    value: item.count,
+  })),
+)
+
+const syncStatusCards = computed(() =>
+  (taskMonitor.value?.sync_status_counts || []).map((item) => ({
+    label: `同步 ${item.status}`,
+    value: item.count,
+  })),
+)
+
 const syncJobLabels: Record<string, string> = {
   verify_stores: '校验店铺',
   sync_products: '同步商品',
@@ -603,6 +704,22 @@ const syncJobLabels: Record<string, string> = {
 
 function jobTypeLabel(value?: string | null) {
   return syncJobLabels[value || ''] || value || '-'
+}
+
+function taskStatusTag(status?: string | null) {
+  if (!status) {
+    return 'info'
+  }
+  if (['success', 'completed'].includes(status)) {
+    return 'success'
+  }
+  if (['failed', 'submit_failed', 'queue_failed', 'completed_with_errors'].includes(status)) {
+    return 'danger'
+  }
+  if (['retrying', 'queued', 'dispatching'].includes(status)) {
+    return 'warning'
+  }
+  return 'info'
 }
 
 function formatDate(value?: string | null) {
@@ -642,6 +759,15 @@ async function loadSyncRuns() {
   })
 }
 
+async function loadTaskMonitor() {
+  const [monitorData, alertData] = await Promise.all([
+    fetchAdminTaskMonitor(),
+    fetchAdminSystemAlerts(),
+  ])
+  taskMonitor.value = monitorData
+  systemAlerts.value = alertData
+}
+
 async function loadData() {
   loading.value = true
   errorMessage.value = ''
@@ -657,6 +783,8 @@ async function loadData() {
       cacheData,
       scheduleData,
       runData,
+      monitorData,
+      alertData,
     ] = await Promise.all([
       fetchAdminOverview(),
       fetchAdminTenants(),
@@ -668,6 +796,8 @@ async function loadData() {
       fetchAdminCacheStatus(),
       fetchAdminSyncSchedules(),
       fetchAdminSyncRuns({ limit: 100 }),
+      fetchAdminTaskMonitor(),
+      fetchAdminSystemAlerts(),
     ])
     overview.value = overviewData
     tenants.value = tenantData
@@ -679,6 +809,8 @@ async function loadData() {
     cacheStatus.value = cacheData
     syncSchedules.value = scheduleData
     syncRuns.value = runData
+    taskMonitor.value = monitorData
+    systemAlerts.value = alertData
     await loadUsers()
   } catch (error: any) {
     errorMessage.value = error?.response?.data?.detail || error?.message || '后台数据加载失败'
@@ -827,7 +959,7 @@ function resetScheduleForm() {
   scheduleForm.name = ''
   scheduleForm.job_type = 'sync_orders'
   scheduleForm.enabled = true
-  scheduleForm.interval_minutes = 60
+  scheduleForm.interval_minutes = 120
   scheduleForm.days = 7
   scheduleForm.next_run_at = null
 }
@@ -903,6 +1035,19 @@ async function clearCache() {
     auditLogs.value = await fetchAdminAuditLogs()
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || error?.message || '缓存清理失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function syncSellerAnalyticsCache() {
+  submitting.value = true
+  try {
+    const result = await syncAdminSellerAnalyticsCache({ days: 7 })
+    ElMessage.success(`Seller 分析缓存同步已排队：${result.task_id}`)
+    await Promise.all([loadTaskMonitor(), loadSyncRuns()])
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || 'Seller 分析缓存同步失败')
   } finally {
     submitting.value = false
   }

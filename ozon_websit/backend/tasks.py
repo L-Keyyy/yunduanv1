@@ -16,6 +16,8 @@ from main import (
     _sync_products_from_upload_jobs,
     _sync_store_orders,
     _sync_store_products_from_ozon,
+    dispatch_upload_jobs,
+    poll_upload_jobs,
     run_refresh_analytics,
     run_refresh_upload_job,
     run_upload_job,
@@ -443,6 +445,7 @@ def run_due_schedules(limit: int = 20) -> Dict[str, Any]:
             .filter(models.SyncSchedule.enabled == True)  # noqa: E712
             .filter(models.SyncSchedule.next_run_at.isnot(None))
             .filter(models.SyncSchedule.next_run_at <= now)
+            .filter(models.SyncSchedule.last_status != "queued")
             .filter(
                 (models.SyncSchedule.locked_until.is_(None))
                 | (models.SyncSchedule.locked_until <= now)
@@ -451,16 +454,32 @@ def run_due_schedules(limit: int = 20) -> Dict[str, Any]:
             .limit(limit)
             .all()
         )
-        schedule_ids = [schedule.id for schedule in schedules]
+        queued: List[Dict[str, Any]] = []
+        for index, schedule in enumerate(schedules):
+            async_result = celery_app.send_task(
+                "ozon.run_sync_schedule",
+                kwargs={"schedule_id": schedule.id, "triggered_by": "scheduler"},
+                queue="sync",
+                countdown=index * 30,
+            )
+            schedule.last_status = "queued"
+            schedule.last_task_id = async_result.id
+            queued.append(
+                {
+                    "schedule_id": schedule.id,
+                    "task_id": async_result.id,
+                    "countdown": index * 30,
+                }
+            )
+        db.commit()
     finally:
         db.close()
 
-    results = [run_sync_schedule(schedule_id, triggered_by="scheduler") for schedule_id in schedule_ids]
     return {
         "ok": True,
-        "message": f"Processed {len(results)} due sync schedule(s)",
-        "processed": len(results),
-        "results": results,
+        "message": f"Queued {len(queued)} due sync schedule(s)",
+        "processed": len(queued),
+        "results": queued,
     }
 
 
@@ -586,6 +605,18 @@ def cloud_follow_submit_task(
 def upload_job_task(job_id: int) -> Dict[str, Any]:
     logger.info("Starting upload_job_task job_id=%s", job_id)
     return run_upload_job(job_id=job_id)
+
+
+@celery_app.task(name="ozon.dispatch_upload_jobs")
+def dispatch_upload_jobs_task(limit: int = 48) -> Dict[str, Any]:
+    logger.info("Starting dispatch_upload_jobs_task limit=%s", limit)
+    return dispatch_upload_jobs(limit=limit)
+
+
+@celery_app.task(name="ozon.poll_upload_jobs")
+def poll_upload_jobs_task(limit: int = 200) -> Dict[str, Any]:
+    logger.info("Starting poll_upload_jobs_task limit=%s", limit)
+    return poll_upload_jobs(limit=limit)
 
 
 @celery_app.task(name="ozon.refresh_upload_job")

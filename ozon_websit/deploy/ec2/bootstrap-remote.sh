@@ -121,6 +121,8 @@ ln -sfn "$(dirname "${CHROME_ROOT}")/chrome-linux64" "${CHROME_ROOT}/chrome-linu
 
 sudo install -m 0644 "${DEPLOY_ROOT}/ozon-backend.service" /etc/systemd/system/ozon-backend.service
 sudo install -m 0644 "${DEPLOY_ROOT}/ozon-worker.service" /etc/systemd/system/ozon-worker.service
+sudo install -m 0644 "${DEPLOY_ROOT}/ozon-upload-worker.service" /etc/systemd/system/ozon-upload-worker.service
+sudo install -m 0644 "${DEPLOY_ROOT}/ozon-browser-worker.service" /etc/systemd/system/ozon-browser-worker.service
 sudo install -m 0644 "${DEPLOY_ROOT}/ozon-beat.service" /etc/systemd/system/ozon-beat.service
 sudo install -m 0644 "${DEPLOY_ROOT}/ozon-chrome.service" /etc/systemd/system/ozon-chrome.service
 sudo install -m 0644 "${DEPLOY_ROOT}/ozon_spa.conf" /etc/nginx/default.d/ozon_spa.conf
@@ -128,9 +130,11 @@ sudo rm -rf /usr/share/nginx/html/*
 sudo cp -r "${FRONTEND_ROOT}/." /usr/share/nginx/html/
 
 sudo systemctl daemon-reload
-sudo systemctl enable nginx ozon-backend ozon-worker ozon-beat ozon-chrome >/dev/null
+sudo systemctl enable nginx ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat ozon-chrome >/dev/null
 sudo systemctl restart ozon-backend
 sudo systemctl restart ozon-worker
+sudo systemctl restart ozon-upload-worker
+sudo systemctl restart ozon-browser-worker
 sudo systemctl restart ozon-beat
 sudo systemctl restart ozon-chrome
 sudo systemctl restart nginx

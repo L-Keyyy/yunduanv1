@@ -139,6 +139,52 @@ export interface AdminCacheStatus {
   seller_product_market_entries: number
 }
 
+export interface AdminTaskStatusCount {
+  status: string
+  count: number
+}
+
+export interface AdminTaskUploadJob {
+  id: number
+  store_id: number
+  store_name?: string | null
+  status: string
+  item_count: number
+  source?: string | null
+  local_task_id?: string | null
+  ozon_task_id?: string | null
+  attempt_count: number
+  max_attempts: number
+  celery_task_id?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  next_attempt_at?: string | null
+  last_refreshed_at?: string | null
+  next_refresh_at?: string | null
+  cancel_requested: boolean
+  error?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AdminTaskMonitor {
+  upload_status_counts: AdminTaskStatusCount[]
+  upload_active_global_stores: number
+  upload_queue_backlog: number
+  recent_upload_jobs: AdminTaskUploadJob[]
+  sync_status_counts: AdminTaskStatusCount[]
+  recent_sync_runs: AdminSyncRun[]
+}
+
+export interface AdminSystemAlert {
+  code: string
+  severity: string
+  status: string
+  message: string
+  value?: number | null
+  threshold?: number | null
+}
+
 export interface AdminSyncSchedule {
   id: number
   tenant_id: number
@@ -194,6 +240,7 @@ export interface AdminAsyncTask {
   mode: string
   task_id: string
   task_name: string
+  queue?: string | null
   status: string
 }
 
@@ -271,6 +318,28 @@ export async function clearAdminCache(scope = 'all') {
     '/admin/cache/clear',
     { scope },
   )
+  return data
+}
+
+export async function syncAdminSellerAnalyticsCache(payload?: {
+  tenant_id?: number
+  store_id?: number
+  days?: number
+}) {
+  const { data } = await apiClient.post<AdminAsyncTask>(
+    '/admin/cache/sync-seller-analytics',
+    payload || {},
+  )
+  return data
+}
+
+export async function fetchAdminTaskMonitor() {
+  const { data } = await apiClient.get<AdminTaskMonitor>('/admin/task-monitor')
+  return data
+}
+
+export async function fetchAdminSystemAlerts() {
+  const { data } = await apiClient.get<AdminSystemAlert[]>('/admin/system-alerts')
   return data
 }
 
