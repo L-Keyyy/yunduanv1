@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = REDIS_URL
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-super-secret-key-here")
+    FIELD_ENCRYPTION_KEY: str = os.getenv("FIELD_ENCRYPTION_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
@@ -70,6 +71,10 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.APP_ENV == "development"
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV in {"production", "prod"}
 
 
 settings = Settings()

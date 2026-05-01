@@ -269,6 +269,22 @@ class UploadJobCreate(BaseModel):
     local_task_id: Optional[str] = None
 
 
+class UploadJobItemResponse(BaseModel):
+    id: int
+    upload_job_id: int
+    store_id: int
+    offer_id: str
+    sku: Optional[str] = None
+    status: str
+    request_payload: Dict[str, Any]
+    result_payload: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    ozon_product_id: Optional[str] = None
+    attempt_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class UploadJobResponse(BaseModel):
     id: int
     store_id: int
@@ -281,6 +297,7 @@ class UploadJobResponse(BaseModel):
     request_payload: Dict[str, Any]
     result_payload: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    items: List[UploadJobItemResponse] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -715,6 +732,11 @@ class OrderSyncResponse(BaseModel):
 
 class StoreScopedTaskRequest(BaseModel):
     store_id: Optional[int] = None
+
+
+class AnalyticsRefreshRequest(BaseModel):
+    store_id: Optional[int] = None
+    days: int = Field(default=7, ge=1, le=365)
 
 
 class ProductSyncResponse(BaseModel):

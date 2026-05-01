@@ -16,6 +16,9 @@ from main import (
     _sync_products_from_upload_jobs,
     _sync_store_orders,
     _sync_store_products_from_ozon,
+    run_refresh_analytics,
+    run_refresh_upload_job,
+    run_upload_job,
 )
 from ozon_client import verify_ozon_credentials
 
@@ -34,16 +37,13 @@ def _select_stores(
     tenant_id: Optional[int] = None,
 ) -> List[models.Store]:
     query = db.query(models.Store).order_by(models.Store.id.asc())
-    if tenant_id:
+    if tenant_id is not None:
         query = query.filter(models.Store.tenant_id == tenant_id)
     elif user_owner:
         user = db.query(models.User).filter(models.User.username == user_owner).first()
         tenant_id = user.primary_tenant_id if user else None
-        if tenant_id:
-            query = query.filter(
-                (models.Store.tenant_id == tenant_id)
-                | (models.Store.user_owner == user_owner)
-            )
+        if tenant_id is not None:
+            query = query.filter(models.Store.tenant_id == tenant_id)
         else:
             query = query.filter(models.Store.user_owner == user_owner)
     if store_id is not None:
@@ -204,16 +204,13 @@ def run_sync_browser_warehouses(
     db = SessionLocal()
     try:
         query = db.query(models.Store).filter(models.Store.id == store_id)
-        if tenant_id:
+        if tenant_id is not None:
             query = query.filter(models.Store.tenant_id == tenant_id)
         elif user_owner:
             user = db.query(models.User).filter(models.User.username == user_owner).first()
             tenant_id = user.primary_tenant_id if user else None
-            if tenant_id:
-                query = query.filter(
-                    (models.Store.tenant_id == tenant_id)
-                    | (models.Store.user_owner == user_owner)
-                )
+            if tenant_id is not None:
+                query = query.filter(models.Store.tenant_id == tenant_id)
             else:
                 query = query.filter(models.Store.user_owner == user_owner)
         store = query.first()
@@ -580,6 +577,39 @@ def cloud_follow_submit_task(
         preferred_url_fragment=preferred_url_fragment,
         front_cookie=front_cookie,
         user_agent=user_agent,
+        user_owner=user_owner,
+        tenant_id=tenant_id,
+    )
+
+
+@celery_app.task(name="ozon.upload_job")
+def upload_job_task(job_id: int) -> Dict[str, Any]:
+    logger.info("Starting upload_job_task job_id=%s", job_id)
+    return run_upload_job(job_id=job_id)
+
+
+@celery_app.task(name="ozon.refresh_upload_job")
+def refresh_upload_job_task(job_id: int) -> Dict[str, Any]:
+    logger.info("Starting refresh_upload_job_task job_id=%s", job_id)
+    return run_refresh_upload_job(job_id=job_id)
+
+
+@celery_app.task(name="ozon.refresh_analytics")
+def refresh_analytics_task(
+    days: int = 7,
+    store_id: Optional[int] = None,
+    user_owner: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    logger.info(
+        "Starting refresh_analytics_task days=%s store_id=%s user_owner=%s",
+        days,
+        store_id,
+        user_owner,
+    )
+    return run_refresh_analytics(
+        days=days,
+        store_id=store_id,
         user_owner=user_owner,
         tenant_id=tenant_id,
     )

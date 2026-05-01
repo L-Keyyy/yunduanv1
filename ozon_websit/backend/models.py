@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import (
     Boolean,
     Column,
@@ -12,6 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 
 from database import Base
+from security import decrypt_secret, encrypt_secret
 
 
 class User(Base):
@@ -274,12 +277,28 @@ class UserCloudFollowConfig(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     username = Column(String, nullable=False, index=True)
-    front_cookie = Column(Text, nullable=True)
-    user_agent = Column(Text, nullable=True)
+    front_cookie_encrypted = Column("front_cookie", Text, nullable=True)
+    user_agent_encrypted = Column("user_agent", Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    @property
+    def front_cookie(self) -> Optional[str]:
+        return decrypt_secret(self.front_cookie_encrypted)
+
+    @front_cookie.setter
+    def front_cookie(self, value: Optional[str]) -> None:
+        self.front_cookie_encrypted = encrypt_secret(value)
+
+    @property
+    def user_agent(self) -> Optional[str]:
+        return decrypt_secret(self.user_agent_encrypted)
+
+    @user_agent.setter
+    def user_agent(self, value: Optional[str]) -> None:
+        self.user_agent_encrypted = encrypt_secret(value)
 
 
 class CloudFollowCollectTask(Base):
@@ -320,8 +339,8 @@ class Store(Base):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     store_name = Column(String, index=True, nullable=False)
-    client_id = Column(String, nullable=False)
-    api_key = Column(String, nullable=False)
+    client_id_encrypted = Column("client_id", String, nullable=False)
+    api_key_encrypted = Column("api_key", String, nullable=False)
     currency = Column(String, default="CNY")
     email = Column(String, nullable=True)
     store_group = Column(String, nullable=True)
@@ -342,6 +361,22 @@ class Store(Base):
     add_time = Column(DateTime(timezone=True), server_default=func.now())
     user_owner = Column(String, default="admin")
 
+    @property
+    def client_id(self) -> str:
+        return decrypt_secret(self.client_id_encrypted) or ""
+
+    @client_id.setter
+    def client_id(self, value: Optional[str]) -> None:
+        self.client_id_encrypted = encrypt_secret(value) or ""
+
+    @property
+    def api_key(self) -> str:
+        return decrypt_secret(self.api_key_encrypted) or ""
+
+    @api_key.setter
+    def api_key(self, value: Optional[str]) -> None:
+        self.api_key_encrypted = encrypt_secret(value) or ""
+
 
 class UploadJob(Base):
     __tablename__ = "upload_jobs"
@@ -358,6 +393,30 @@ class UploadJob(Base):
     result_payload = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UploadJobItem(Base):
+    __tablename__ = "upload_job_items"
+    __table_args__ = (
+        UniqueConstraint("upload_job_id", "offer_id", name="uq_upload_job_items_job_offer"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    upload_job_id = Column(Integer, ForeignKey("upload_jobs.id"), nullable=False, index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False, index=True)
+    offer_id = Column(String, nullable=False, index=True)
+    sku = Column(String, nullable=True, index=True)
+    status = Column(String, default="queued", nullable=False, index=True)
+    request_payload = Column(Text, nullable=False)
+    result_payload = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    ozon_product_id = Column(String, nullable=True, index=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

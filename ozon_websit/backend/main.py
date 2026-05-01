@@ -207,6 +207,7 @@ def _ensure_tenant_schema() -> None:
         models.SyncRun.__table__,
         models.UserCloudFollowConfig.__table__,
         models.CloudFollowCollectTask.__table__,
+        models.UploadJobItem.__table__,
     ):
         table.create(bind=engine, checkfirst=True)
 
@@ -214,6 +215,7 @@ def _ensure_tenant_schema() -> None:
     _add_column_if_missing("users", "last_login_at", "last_login_at TIMESTAMP")
     _add_column_if_missing("stores", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("upload_jobs", "tenant_id", "tenant_id INTEGER")
+    _add_column_if_missing("upload_job_items", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("products", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("order_records", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("pricing_templates", "tenant_id", "tenant_id INTEGER")
@@ -245,6 +247,47 @@ def _normalize_warehouse_labels() -> None:
             )
 
 
+def _encrypt_existing_sensitive_fields() -> None:
+    if not _table_exists("stores"):
+        return
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for store in db.query(models.Store).all():
+            if store.client_id_encrypted and not str(store.client_id_encrypted).startswith(
+                "enc:v1:"
+            ):
+                store.client_id = store.client_id_encrypted
+                changed = True
+            if store.api_key_encrypted and not str(store.api_key_encrypted).startswith(
+                "enc:v1:"
+            ):
+                store.api_key = store.api_key_encrypted
+                changed = True
+
+        if _table_exists("user_cloud_follow_configs"):
+            for config in db.query(models.UserCloudFollowConfig).all():
+                if config.front_cookie_encrypted and not str(
+                    config.front_cookie_encrypted
+                ).startswith("enc:v1:"):
+                    config.front_cookie = config.front_cookie_encrypted
+                    changed = True
+                if config.user_agent_encrypted and not str(
+                    config.user_agent_encrypted
+                ).startswith("enc:v1:"):
+                    config.user_agent = config.user_agent_encrypted
+                    changed = True
+
+        if changed:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _initialize_runtime_database() -> None:
     if settings.AUTO_CREATE_SCHEMA:
         Base.metadata.create_all(bind=engine)
@@ -253,6 +296,7 @@ def _initialize_runtime_database() -> None:
     _ensure_store_owner_schema()
     _ensure_product_schema()
     _normalize_warehouse_labels()
+    _encrypt_existing_sensitive_fields()
     _ensure_default_auth_user()
     _ensure_default_tenant_seed()
 
@@ -631,10 +675,8 @@ def _user_store_query(db: Session, username: str):
     user = _find_user_by_username(db, username)
     tenant_id = user.primary_tenant_id if user else None
     query = db.query(models.Store)
-    if tenant_id:
-        query = query.filter(
-            or_(models.Store.tenant_id == tenant_id, models.Store.user_owner == username)
-        )
+    if tenant_id is not None:
+        query = query.filter(models.Store.tenant_id == tenant_id)
     else:
         query = query.filter(models.Store.user_owner == username)
     return query.order_by(models.Store.id.asc())
@@ -644,10 +686,8 @@ def _user_store_ids_query(db: Session, username: str):
     user = _find_user_by_username(db, username)
     tenant_id = user.primary_tenant_id if user else None
     query = db.query(models.Store.id)
-    if tenant_id:
-        return query.filter(
-            or_(models.Store.tenant_id == tenant_id, models.Store.user_owner == username)
-        )
+    if tenant_id is not None:
+        return query.filter(models.Store.tenant_id == tenant_id)
     return query.filter(models.Store.user_owner == username)
 
 
@@ -878,7 +918,7 @@ def _ensure_default_tenant_seed() -> None:
                 ),
                 {"tenant_id": tenant.id},
             )
-        for table_name in ("upload_jobs", "products", "order_records"):
+        for table_name in ("upload_jobs", "upload_job_items", "products", "order_records"):
             if _table_exists(table_name):
                 db.execute(
                     text(
@@ -4602,7 +4642,67 @@ def _demo_order_query(db: Session, store_id: Optional[int] = None):
     return query
 
 
-def _serialize_upload_job(job: models.UploadJob, store_name: Optional[str]) -> Dict[str, Any]:
+def _extract_upload_item_offer_id(item: Dict[str, Any], index: int, store_id: int) -> str:
+    offer_id = str(item.get("offer_id") or item.get("sku") or "").strip()
+    return offer_id or f"offer-{store_id}-{index}"
+
+
+def _extract_upload_item_sku(item: Dict[str, Any], offer_id: str) -> Optional[str]:
+    sku = str(item.get("sku") or item.get("barcode") or offer_id or "").strip()
+    return sku or None
+
+
+def _upload_job_items_for_job(db: Session, job_id: int) -> List[models.UploadJobItem]:
+    return (
+        db.query(models.UploadJobItem)
+        .filter(models.UploadJobItem.upload_job_id == job_id)
+        .order_by(models.UploadJobItem.id.asc())
+        .all()
+    )
+
+
+def _upload_job_items_by_job_ids(
+    db: Session,
+    job_ids: Iterable[int],
+) -> Dict[int, List[models.UploadJobItem]]:
+    unique_job_ids = [job_id for job_id in {int(job_id) for job_id in job_ids if job_id is not None}]
+    if not unique_job_ids:
+        return {}
+    rows = (
+        db.query(models.UploadJobItem)
+        .filter(models.UploadJobItem.upload_job_id.in_(unique_job_ids))
+        .order_by(models.UploadJobItem.upload_job_id.asc(), models.UploadJobItem.id.asc())
+        .all()
+    )
+    grouped: Dict[int, List[models.UploadJobItem]] = {job_id: [] for job_id in unique_job_ids}
+    for row in rows:
+        grouped.setdefault(row.upload_job_id, []).append(row)
+    return grouped
+
+
+def _serialize_upload_job_item(item: models.UploadJobItem) -> Dict[str, Any]:
+    return {
+        "id": item.id,
+        "upload_job_id": item.upload_job_id,
+        "store_id": item.store_id,
+        "offer_id": item.offer_id,
+        "sku": item.sku,
+        "status": item.status,
+        "request_payload": _load_json(item.request_payload) or {},
+        "result_payload": _load_json(item.result_payload),
+        "error": item.error,
+        "ozon_product_id": item.ozon_product_id,
+        "attempt_count": item.attempt_count or 0,
+        "created_at": _format_datetime(item.created_at),
+        "updated_at": _format_datetime(item.updated_at),
+    }
+
+
+def _serialize_upload_job(
+    job: models.UploadJob,
+    store_name: Optional[str],
+    items: Optional[List[models.UploadJobItem]] = None,
+) -> Dict[str, Any]:
     return {
         "id": job.id,
         "store_id": job.store_id,
@@ -4615,6 +4715,7 @@ def _serialize_upload_job(job: models.UploadJob, store_name: Optional[str]) -> D
         "request_payload": _load_json(job.request_payload) or {},
         "result_payload": _load_json(job.result_payload),
         "error": job.error,
+        "items": [_serialize_upload_job_item(item) for item in items] if items is not None else [],
         "created_at": _format_datetime(job.created_at),
         "updated_at": _format_datetime(job.updated_at),
     }
@@ -4624,16 +4725,25 @@ def _extract_upload_result_items(result_payload: Optional[Dict[str, Any]]) -> Li
     if not isinstance(result_payload, dict):
         return []
 
+    containers: List[Dict[str, Any]] = [result_payload]
     data = result_payload.get("data")
-    if not isinstance(data, dict):
-        return []
+    if isinstance(data, dict):
+        containers.append(data)
+        task_result = data.get("result")
+        if isinstance(task_result, dict):
+            containers.append(task_result)
+    result = result_payload.get("result")
+    if isinstance(result, dict):
+        containers.append(result)
 
-    task_result = data.get("result")
-    if not isinstance(task_result, dict):
-        return []
+    items: Optional[List[Any]] = None
+    for container in containers:
+        candidate = container.get("items")
+        if isinstance(candidate, list):
+            items = candidate
+            break
 
-    items = task_result.get("items")
-    if not isinstance(items, list):
+    if items is None:
         return []
 
     return [item for item in items if isinstance(item, dict)]
@@ -4767,10 +4877,8 @@ def _resolve_store(
     if username:
         user = _find_user_by_username(db, username)
         tenant_id = user.primary_tenant_id if user else None
-        if tenant_id:
-            query = query.filter(
-                or_(models.Store.tenant_id == tenant_id, models.Store.user_owner == username)
-            )
+        if tenant_id is not None:
+            query = query.filter(models.Store.tenant_id == tenant_id)
         else:
             query = query.filter(models.Store.user_owner == username)
 
@@ -4808,6 +4916,7 @@ def _validate_upload_items(items: List[Dict[str, Any]]) -> None:
         raise HTTPException(status_code=400, detail="items cannot exceed 100 per job")
 
     required_fields = ("offer_id", "description_category_id", "type_id", "primary_image")
+    seen_offer_ids: set[str] = set()
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             raise HTTPException(
@@ -4822,12 +4931,135 @@ def _validate_upload_items(items: List[Dict[str, Any]]) -> None:
                 detail=f"item #{index} is missing required fields: {', '.join(missing_fields)}",
             )
 
+        offer_id = str(item.get("offer_id") or "").strip()
+        if offer_id in seen_offer_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"item #{index} has duplicate offer_id: {offer_id}",
+            )
+        seen_offer_ids.add(offer_id)
+
         images = item.get("images")
         if images is not None and not isinstance(images, list):
             raise HTTPException(
                 status_code=400,
                 detail=f"item #{index} field 'images' must be a list when provided",
             )
+
+
+def _create_upload_job_items(
+    db: Session,
+    *,
+    job: models.UploadJob,
+    items: List[Dict[str, Any]],
+) -> List[models.UploadJobItem]:
+    rows: List[models.UploadJobItem] = []
+    for index, item in enumerate(items, start=1):
+        offer_id = _extract_upload_item_offer_id(item, index, job.store_id)
+        row = models.UploadJobItem(
+            tenant_id=job.tenant_id,
+            upload_job_id=job.id,
+            store_id=job.store_id,
+            offer_id=offer_id,
+            sku=_extract_upload_item_sku(item, offer_id),
+            status="queued",
+            request_payload=json.dumps(item, ensure_ascii=False),
+        )
+        db.add(row)
+        rows.append(row)
+    db.flush()
+    return rows
+
+
+def _json_dumps_or_none(value: Optional[Dict[str, Any]]) -> Optional[str]:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _extract_upload_result_error(item: Dict[str, Any]) -> Optional[str]:
+    for key in ("error", "errors", "message", "messages", "status_message", "fail_reason"):
+        value = item.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+    return None
+
+
+def _extract_upload_result_product_id(item: Dict[str, Any]) -> Optional[str]:
+    for key in ("product_id", "productId", "ozon_product_id", "ozonProductId"):
+        value = item.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _upload_item_status_from_result(item: Dict[str, Any], default_status: str = "processing") -> str:
+    normalized = _normalize_upload_item_status(
+        item.get("status") or item.get("state") or item.get("status_code")
+    )
+    if normalized in SUCCESSFUL_UPLOAD_ITEM_STATUSES:
+        return "completed"
+    if normalized in FAILED_UPLOAD_ITEM_STATUSES:
+        return "failed"
+    if normalized in PENDING_UPLOAD_ITEM_STATUSES:
+        return "processing"
+    return normalized or default_status
+
+
+def _upload_result_item_keys(item: Dict[str, Any]) -> List[str]:
+    keys: List[str] = []
+    for key in ("offer_id", "offerId", "offerID", "sku", "product_id", "productId"):
+        value = item.get(key)
+        if value in (None, ""):
+            continue
+        keys.append(str(value).strip())
+    return [key for key in keys if key]
+
+
+def _update_upload_job_items_from_result(
+    db: Session,
+    *,
+    job: models.UploadJob,
+    result_payload: Optional[Dict[str, Any]],
+    default_status: str,
+    default_error: Optional[str] = None,
+) -> None:
+    rows = _upload_job_items_for_job(db, job.id)
+    if not rows:
+        return
+
+    result_items = _extract_upload_result_items(result_payload)
+    if not result_items:
+        result_json = _json_dumps_or_none(result_payload)
+        for row in rows:
+            row.status = default_status
+            row.result_payload = result_json
+            row.error = default_error
+        return
+
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for result_item in result_items:
+        for key in _upload_result_item_keys(result_item):
+            by_key[key] = result_item
+
+    for index, row in enumerate(rows):
+        result_item = by_key.get(row.offer_id)
+        if result_item is None and row.sku:
+            result_item = by_key.get(row.sku)
+        if result_item is None and len(result_items) == len(rows):
+            result_item = result_items[index]
+        if result_item is None:
+            row.status = default_status
+            row.error = default_error
+            continue
+
+        row.status = _upload_item_status_from_result(result_item, default_status)
+        row.result_payload = json.dumps(result_item, ensure_ascii=False)
+        row.error = _extract_upload_result_error(result_item)
+        row.ozon_product_id = _extract_upload_result_product_id(result_item)
 
 
 async def _submit_upload_job(
@@ -4855,7 +5087,7 @@ async def _submit_upload_job(
     job = models.UploadJob(
         tenant_id=store.tenant_id,
         store_id=store.id,
-        status="created",
+        status="queued",
         item_count=len(items),
         source=source,
         local_task_id=local_task_id,
@@ -4864,26 +5096,23 @@ async def _submit_upload_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+    _create_upload_job_items(db, job=job, items=items)
+    db.commit()
+    db.refresh(job)
+    item_rows = _upload_job_items_for_job(db, job.id)
 
-    upload_result = await upload_products(store.client_id, store.api_key, items)
-    job.result_payload = json.dumps(upload_result, ensure_ascii=False)
-    if upload_result.get("ok"):
-        task_id = upload_result.get("data", {}).get("result", {}).get("task_id")
-        job.ozon_task_id = str(task_id) if task_id is not None else None
-        job.status = "submitted"
-        job.error = None
-    else:
-        job.status = "submit_failed"
-        job.error = upload_result.get("error", "upload_failed")
+    try:
+        queue_result = _submit_async_task("ozon.upload_job", job_id=job.id)
+    except HTTPException as exc:
+        job.status = "queue_failed"
+        job.error = str(exc.detail or "queue_failed")
+        for item_row in item_rows:
+            item_row.status = "queue_failed"
+            item_row.error = job.error
+        db.commit()
+        raise
 
-    _upsert_products_for_items(
-        db=db,
-        store_id=store.id,
-        upload_job_id=job.id,
-        items=items,
-        source=source,
-        job_status=job.status,
-    )
+    job.result_payload = json.dumps({"queue": queue_result}, ensure_ascii=False)
     db.commit()
     db.refresh(job)
     return job
@@ -4915,12 +5144,252 @@ def _derive_upload_status(result_payload: Optional[Dict[str, Any]]) -> str:
     return "processing"
 
 
+def _request_items_for_upload_job(db: Session, job: models.UploadJob) -> List[Dict[str, Any]]:
+    item_payloads: List[Dict[str, Any]] = []
+    for row in _upload_job_items_for_job(db, job.id):
+        payload = _load_json(row.request_payload)
+        if isinstance(payload, dict):
+            item_payloads.append(payload)
+    if item_payloads:
+        return item_payloads
+
+    request_payload = _load_json(job.request_payload) or {}
+    items = request_payload.get("items")
+    if isinstance(items, list):
+        return [item for item in items if isinstance(item, dict)]
+    return []
+
+
+def run_upload_job(job_id: int) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
+        if not job:
+            return {"ok": False, "message": "Upload job not found", "job_id": job_id}
+        if job.status in {
+            "uploading",
+            "submitted",
+            "processing",
+            "completed",
+            "completed_with_errors",
+        }:
+            return {
+                "ok": True,
+                "message": "Upload job is already running or submitted",
+                "job_id": job.id,
+                "status": job.status,
+            }
+
+        store = db.query(models.Store).filter(models.Store.id == job.store_id).first()
+        if not store:
+            raise ValueError("Store not found for upload job")
+        items = _request_items_for_upload_job(db, job)
+        if not items:
+            raise ValueError("Upload job has no item payloads")
+
+        job.status = "uploading"
+        job.error = None
+        for item_row in _upload_job_items_for_job(db, job.id):
+            item_row.status = "uploading"
+            item_row.error = None
+            item_row.attempt_count = int(item_row.attempt_count or 0) + 1
+        db.commit()
+
+        upload_result = asyncio.run(upload_products(store.client_id, store.api_key, items))
+        job.result_payload = json.dumps(upload_result, ensure_ascii=False)
+        if upload_result.get("ok"):
+            result_body = (upload_result.get("data") or {}).get("result") or {}
+            task_id = result_body.get("task_id")
+            job.ozon_task_id = str(task_id) if task_id is not None else None
+            job.status = "submitted"
+            job.error = None
+            item_default_status = "submitted"
+            item_default_error = None
+        else:
+            job.status = "submit_failed"
+            job.error = upload_result.get("error", "upload_failed")
+            item_default_status = "submit_failed"
+            item_default_error = job.error
+
+        _update_upload_job_items_from_result(
+            db,
+            job=job,
+            result_payload=upload_result,
+            default_status=item_default_status,
+            default_error=item_default_error,
+        )
+        _upsert_products_for_items(
+            db=db,
+            store_id=job.store_id,
+            upload_job_id=job.id,
+            items=items,
+            source=job.source,
+            job_status=job.status,
+        )
+        db.commit()
+        return {
+            "ok": bool(upload_result.get("ok")),
+            "message": "Upload submitted to Ozon" if upload_result.get("ok") else job.error,
+            "job_id": job.id,
+            "status": job.status,
+            "ozon_task_id": job.ozon_task_id,
+            "item_count": len(items),
+        }
+    except Exception as exc:
+        db.rollback()
+        failed_job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
+        if failed_job:
+            failed_job.status = "submit_failed"
+            failed_job.error = str(exc)
+            for item_row in _upload_job_items_for_job(db, failed_job.id):
+                item_row.status = "submit_failed"
+                item_row.error = str(exc)
+            db.commit()
+        raise
+    finally:
+        db.close()
+
+
+def run_refresh_upload_job(job_id: int) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        job = db.query(models.UploadJob).filter(models.UploadJob.id == int(job_id)).first()
+        if not job:
+            return {"ok": False, "message": "Upload job not found", "job_id": job_id}
+        if not job.ozon_task_id:
+            return {
+                "ok": False,
+                "message": "Upload job has no Ozon task id to refresh",
+                "job_id": job.id,
+                "status": job.status,
+            }
+
+        store = db.query(models.Store).filter(models.Store.id == job.store_id).first()
+        if not store:
+            raise ValueError("Store not found for upload job")
+
+        result = asyncio.run(get_upload_task_info(store.client_id, store.api_key, int(job.ozon_task_id)))
+        job.result_payload = json.dumps(result, ensure_ascii=False)
+        job.status = _derive_upload_status(result)
+        job.error = None if result.get("ok") else result.get("error", "status_refresh_failed")
+
+        _update_upload_job_items_from_result(
+            db,
+            job=job,
+            result_payload=result,
+            default_status=job.status,
+            default_error=job.error,
+        )
+        items = _request_items_for_upload_job(db, job)
+        if items:
+            _upsert_products_for_items(
+                db=db,
+                store_id=job.store_id,
+                upload_job_id=job.id,
+                items=items,
+                source=job.source,
+                job_status=job.status,
+            )
+
+        db.commit()
+        return {
+            "ok": bool(result.get("ok")),
+            "message": "Upload status refreshed" if result.get("ok") else job.error,
+            "job_id": job.id,
+            "status": job.status,
+            "ozon_task_id": job.ozon_task_id,
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def run_refresh_analytics(
+    days: int = 7,
+    store_id: Optional[int] = None,
+    user_owner: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        normalized_days = max(1, min(int(days or 7), 365))
+        store_ids = (
+            [store.id for store in _user_store_query(db, user_owner).all()]
+            if user_owner
+            else []
+        )
+        if tenant_id is not None:
+            store_ids = [
+                row[0]
+                for row in db.query(models.Store.id)
+                .filter(models.Store.tenant_id == tenant_id)
+                .all()
+            ]
+        if store_id is not None:
+            scoped_store_ids = set(store_ids)
+            if (
+                (tenant_id is not None or user_owner)
+                and int(store_id) not in scoped_store_ids
+            ):
+                raise ValueError("Store not accessible for analytics refresh")
+            store_ids = [int(store_id)]
+
+        products_query = db.query(models.Product)
+        orders_query = db.query(models.OrderRecord)
+        if store_ids:
+            products_query = products_query.filter(models.Product.store_id.in_(store_ids))
+            orders_query = orders_query.filter(models.OrderRecord.store_id.in_(store_ids))
+        elif tenant_id is not None or user_owner:
+            return {
+                "ok": True,
+                "message": "No stores available for analytics refresh",
+                "products": 0,
+                "orders": 0,
+                "category_groups": 0,
+                "hot_tags": None,
+            }
+
+        products = products_query.all()
+        orders = orders_query.all()
+        category_result = _build_category_analytics(products, orders, [], normalized_days)
+        hot_tags_meta: Optional[Dict[str, Any]] = None
+        hot_tags_error: Optional[str] = None
+        try:
+            hot_tags = _get_hot_tags_dataset(
+                SELLER_HOT_TAGS_DEFAULT_TREND_WINDOW_DAYS,
+                tenant_id=tenant_id,
+            )
+            hot_tags_meta = dict(hot_tags.get("meta") or {})
+        except Exception as exc:
+            hot_tags_error = str(exc)
+
+        return {
+            "ok": hot_tags_error is None,
+            "message": (
+                "Analytics refresh completed"
+                if hot_tags_error is None
+                else "Analytics refresh completed with hot-tags error"
+            ),
+            "days": normalized_days,
+            "stores": len(store_ids),
+            "products": len(products),
+            "orders": len(orders),
+            "category_groups": len(category_result.get("result") or []),
+            "hot_tags": hot_tags_meta,
+            "hot_tags_error": hot_tags_error,
+        }
+    finally:
+        db.close()
+
+
 def _extension_public_status(job: models.UploadJob) -> str:
-    if job.status in {"submit_failed", "failed", "completed_with_errors"}:
+    if job.status in {"queue_failed", "submit_failed", "failed", "completed_with_errors"}:
         return "failed"
-    if job.status in {"created"}:
+    if job.status in {"created", "queued"}:
         return "queued"
-    if job.status in {"submitted", "processing"}:
+    if job.status in {"uploading", "submitted", "processing"}:
         return "uploading"
     if job.status in {"completed"}:
         return "uploaded"
@@ -5294,9 +5763,9 @@ def _dedupe_upload_jobs_for_list(
 
 
 def _status_from_upload_job(job_status: str) -> str:
-    if job_status in {"submit_failed", "failed"}:
+    if job_status in {"queue_failed", "submit_failed", "failed"}:
         return "rejected"
-    if job_status in {"processing", "submitted", "created"}:
+    if job_status in {"queued", "uploading", "processing", "submitted", "created"}:
         return "approved"
     if job_status in {"completed", "completed_with_errors"}:
         return "approved"
@@ -6137,10 +6606,8 @@ def _store_name_map(
     if username:
         user = _find_user_by_username(db, username)
         tenant_id = user.primary_tenant_id if user else None
-        if tenant_id:
-            query = query.filter(
-                or_(models.Store.tenant_id == tenant_id, models.Store.user_owner == username)
-            )
+        if tenant_id is not None:
+            query = query.filter(models.Store.tenant_id == tenant_id)
         else:
             query = query.filter(models.Store.user_owner == username)
     return {
@@ -7922,7 +8389,7 @@ async def create_store(
     user = _find_user_by_username(db, username)
     tenant_id = _current_tenant_id(request) or (user.primary_tenant_id if user else None)
     existing_query = db.query(models.Store).filter(models.Store.store_name == store.store_name)
-    if tenant_id:
+    if tenant_id is not None:
         existing_query = existing_query.filter(models.Store.tenant_id == tenant_id)
     else:
         existing_query = existing_query.filter(models.Store.user_owner == username)
@@ -7931,7 +8398,7 @@ async def create_store(
         raise HTTPException(status_code=400, detail="Store name already registered")
 
     quota = None
-    if tenant_id:
+    if tenant_id is not None:
         quota = (
             db.query(models.StoreQuota)
             .filter(models.StoreQuota.tenant_id == tenant_id)
@@ -7989,11 +8456,15 @@ def update_store(
         raise HTTPException(status_code=404, detail="Store not found")
 
     if payload.store_name and payload.store_name != db_store.store_name:
-        existing = (
-            db.query(models.Store)
-            .filter(models.Store.store_name == payload.store_name, models.Store.id != store_id)
-            .first()
+        existing_query = db.query(models.Store).filter(
+            models.Store.store_name == payload.store_name,
+            models.Store.id != store_id,
         )
+        if db_store.tenant_id is not None:
+            existing_query = existing_query.filter(models.Store.tenant_id == db_store.tenant_id)
+        else:
+            existing_query = existing_query.filter(models.Store.user_owner == username)
+        existing = existing_query.first()
         if existing:
             raise HTTPException(status_code=400, detail="Store name already registered")
 
@@ -8467,7 +8938,7 @@ async def create_upload_job(
         requested_store_id=payload.store_id,
         requested_store_name=payload.store_name,
     )
-    return _serialize_upload_job(job, store.store_name)
+    return _serialize_upload_job(job, store.store_name, _upload_job_items_for_job(db, job.id))
 
 
 @app.post(
@@ -8579,9 +9050,15 @@ def list_upload_jobs(
 
     jobs = _dedupe_upload_jobs_for_list(query.limit(min(limit * 3, 300)).all(), limit)
     store_names = _store_name_map(db, [job.store_id for job in jobs], username=username)
+    items_by_job = _upload_job_items_by_job_ids(db, [job.id for job in jobs])
     return {
         "result": [
-            _serialize_upload_job(job, store_names.get(job.store_id)) for job in jobs
+            _serialize_upload_job(
+                job,
+                store_names.get(job.store_id),
+                items_by_job.get(job.id, []),
+            )
+            for job in jobs
         ]
     }
 
@@ -8605,7 +9082,11 @@ def get_upload_job(
         raise HTTPException(status_code=404, detail="Upload job not found")
 
     store = _resolve_store(db, job.store_id, username=username)
-    return _serialize_upload_job(job, store.store_name if store else None)
+    return _serialize_upload_job(
+        job,
+        store.store_name if store else None,
+        _upload_job_items_for_job(db, job.id),
+    )
 
 
 @app.get(
@@ -8634,22 +9115,6 @@ async def get_extension_product_status(
     if not job:
         raise HTTPException(status_code=404, detail="Upload job not found")
 
-    if job.ozon_task_id:
-        store = _resolve_store(db, job.store_id, username=username)
-        try:
-            result = await get_upload_task_info(
-                store.client_id,
-                store.api_key,
-                int(job.ozon_task_id),
-            )
-            job.result_payload = json.dumps(result, ensure_ascii=False)
-            job.status = _derive_upload_status(result)
-            job.error = None if result.get("ok") else result.get("error", "status_refresh_failed")
-            db.commit()
-            db.refresh(job)
-        except Exception:
-            db.rollback()
-
     store = _resolve_store(db, job.store_id, username=username)
     return _build_extension_status_payload(job, store_name=store.store_name if store else None)
 
@@ -8677,29 +9142,18 @@ async def refresh_upload_job(
             detail="Upload job has no Ozon task id to refresh",
         )
 
-    store = _resolve_store(db, job.store_id, username=username)
-    result = await get_upload_task_info(
-        store.client_id, store.api_key, int(job.ozon_task_id)
-    )
-    job.result_payload = json.dumps(result, ensure_ascii=False)
-    job.status = _derive_upload_status(result)
-    job.error = None if result.get("ok") else result.get("error", "status_refresh_failed")
-
-    request_payload = _load_json(job.request_payload) or {}
-    items = request_payload.get("items")
-    if isinstance(items, list):
-        _upsert_products_for_items(
-            db=db,
-            store_id=job.store_id,
-            upload_job_id=job.id,
-            items=items,
-            source=job.source,
-            job_status=job.status,
-        )
-
+    queue_result = _submit_async_task("ozon.refresh_upload_job", job_id=job.id)
+    queue_payload = _load_json(job.result_payload) or {}
+    queue_payload["refresh_queue"] = queue_result
+    job.result_payload = json.dumps(queue_payload, ensure_ascii=False)
     db.commit()
     db.refresh(job)
-    return _serialize_upload_job(job, store.store_name)
+    store = _resolve_store(db, job.store_id, username=username)
+    return _serialize_upload_job(
+        job,
+        store.store_name,
+        _upload_job_items_for_job(db, job.id),
+    )
 
 
 @app.get(
@@ -8958,6 +9412,28 @@ def submit_sync_core_task(
     )
 
 
+@app.post(
+    f"{settings.API_V1_STR}/jobs/refresh-analytics",
+    response_model=schemas.AsyncTaskSubmitResponse,
+)
+def submit_refresh_analytics_task(
+    request: Request,
+    payload: schemas.AnalyticsRefreshRequest = Body(default=schemas.AnalyticsRefreshRequest()),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    tenant_id = _current_tenant_id(request)
+    if payload.store_id is not None:
+        _resolve_store(db, payload.store_id, username=username)
+    return _submit_async_task(
+        "ozon.refresh_analytics",
+        store_id=payload.store_id,
+        days=payload.days,
+        user_owner=username,
+        tenant_id=tenant_id,
+    )
+
+
 @app.get(
     f"{settings.API_V1_STR}/jobs/{{task_id}}",
     response_model=schemas.TaskStatusResponse,
@@ -8980,43 +9456,12 @@ async def sync_products(
     tenant_id = _current_tenant_id(request)
     if store_id is not None:
         _resolve_store(db, store_id, username=username)
-    if run_async:
-        return _submit_async_task(
-            "ozon.sync_products",
-            store_id=store_id,
-            user_owner=username,
-            tenant_id=tenant_id,
-        )
-
-    stores = (
-        [_resolve_store(db, store_id, username=username)]
-        if store_id is not None
-        else _user_store_query(db, username).all()
+    return _submit_async_task(
+        "ozon.sync_products",
+        store_id=store_id,
+        user_owner=username,
+        tenant_id=tenant_id,
     )
-    store_ids = [store.id for store in stores]
-    synced_from_upload_jobs = _sync_products_from_upload_jobs(db, store_ids=store_ids)
-    synced_from_ozon = 0
-
-    skipped: List[str] = []
-    for store in stores:
-        try:
-            synced_from_ozon += await _sync_store_products_from_ozon(db, store)
-        except HTTPException as exc:
-            skipped.append(f"{store.store_name}: {exc.detail}")
-    db.commit()
-    total = synced_from_upload_jobs + synced_from_ozon
-    return {
-        "message": (
-            f"Synchronized {total} products "
-            f"(upload jobs: {synced_from_upload_jobs}, Ozon: {synced_from_ozon})"
-        ),
-        "mode": "sync",
-        "synced_total": total,
-        "synced_from_upload_jobs": synced_from_upload_jobs,
-        "synced_from_ozon": synced_from_ozon,
-        "stores": len(stores),
-        "skipped": skipped,
-    }
 
 
 @app.post(f"{settings.API_V1_STR}/products/batch/price")
@@ -9252,40 +9697,13 @@ async def sync_orders(
     tenant_id = _current_tenant_id(request)
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
-    if run_async:
-        return _submit_async_task(
-            "ozon.sync_orders",
-            store_id=payload.store_id,
-            days=payload.days,
-            user_owner=username,
-            tenant_id=tenant_id,
-        )
-
-    if payload.store_id is not None:
-        stores = [_resolve_store(db, payload.store_id, username=username)]
-    else:
-        stores = _user_store_query(db, username).all()
-
-    if not stores:
-        raise HTTPException(status_code=400, detail="No store configured. Please add a store first.")
-
-    synced_total = 0
-    skipped: List[str] = []
-    for store in stores:
-        result = await _sync_store_orders(db, store, payload.days)
-        if result.get("ok"):
-            synced_total += int(result.get("synced", 0))
-        else:
-            skipped.append(f"{store.store_name}: {result.get('error', 'sync_failed')}")
-
-    db.commit()
-    return {
-        "message": f"Synchronized {synced_total} FBS orders across {len(stores)} store(s)",
-        "mode": "sync",
-        "synced_orders": synced_total,
-        "stores": len(stores),
-        "skipped": skipped,
-    }
+    return _submit_async_task(
+        "ozon.sync_orders",
+        store_id=payload.store_id,
+        days=payload.days,
+        user_owner=username,
+        tenant_id=tenant_id,
+    )
 
 
 @app.get(
