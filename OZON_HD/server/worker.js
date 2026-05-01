@@ -20,6 +20,9 @@ const { buildCharacteristicPool, cleanProduct, getCharValue } = require(path.joi
 const { downloadProductImages } = require(path.join(uploaderPath, 'image_downloader'));
 const uploaderConfig = require(path.join(uploaderPath, 'config'));
 
+const LOCAL_IMAGES_ROOT = path.resolve(uploaderPath, 'images');
+const LOCAL_OUTPUT_ROOT = path.resolve(uploaderPath, uploaderConfig.OUTPUT_DIR || 'output');
+
 const CATEGORY_STOP_WORDS = new Set([
   'для', 'под', 'над', 'при', 'это', 'или', 'без', 'с', 'со', 'из', 'в', 'во', 'на', 'по', 'к',
   'и', 'а', 'но', 'от', 'до', 'над', 'у', 'за', 'над', 'the', 'and'
@@ -81,6 +84,83 @@ function tokenizeCategoryText(value) {
     }
   }
   return [...tokens];
+}
+
+function resolveInside(root, ...parts) {
+  const resolvedRoot = path.resolve(root);
+  const target = path.resolve(resolvedRoot, ...parts);
+  if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error(`Refusing to remove path outside ${resolvedRoot}: ${target}`);
+  }
+  return target;
+}
+
+function extractSourceProductId(product) {
+  if (product?.source_product_id) {
+    return String(product.source_product_id);
+  }
+  const raw = product?.scraped_json;
+  if (!raw) {
+    return '';
+  }
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return parsed?.productId ? String(parsed.productId) : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function removePathIfExists(target, result, key) {
+  if (!fs.existsSync(target)) {
+    result[key] = false;
+    return;
+  }
+  try {
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) {
+      fs.rmSync(target, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(target);
+    }
+    result[key] = true;
+  } catch (error) {
+    result[key] = false;
+    result.errors.push(`${key}: ${error.message}`);
+  }
+}
+
+function cleanupUploadedProductLocalData(productId, product) {
+  const sourceProductId = extractSourceProductId(product);
+  const clearedAt = new Date().toISOString();
+  const cleanup = {
+    cleared_at: clearedAt,
+    source_product_id: sourceProductId || null,
+    images_removed: false,
+    output_removed: false,
+    errors: [],
+  };
+
+  if (sourceProductId) {
+    const imageDir = resolveInside(LOCAL_IMAGES_ROOT, sourceProductId);
+    removePathIfExists(imageDir, cleanup, 'images_removed');
+
+    const outputFile = resolveInside(
+      LOCAL_OUTPUT_ROOT,
+      `product_import_${sourceProductId}.json`
+    );
+    removePathIfExists(outputFile, cleanup, 'output_removed');
+  }
+
+  stores.products.update(productId, {
+    scraped_json: null,
+    cleaned_item: null,
+    attributes: null,
+    local_data_cleared_at: clearedAt,
+    local_data_cleanup: cleanup,
+  });
+
+  return cleanup;
 }
 
 function buildCategorySignals(scrapedData) {
@@ -696,6 +776,13 @@ async function processUpload(job) {
     throw new Error(remoteJob?.error || 'Cloud upload submission failed.');
   }
 
+  const cleanupResult = cleanupUploadedProductLocalData(productId, {
+    ...product,
+    status: nextStatus,
+    cloud_upload_job_id: remoteJob?.id || null,
+    cloud_upload_status: remoteStatus,
+  });
+
   // 增加用户用量
   const user = stores.users.get(userId);
   if (user) {
@@ -706,6 +793,7 @@ async function processUpload(job) {
     task_id: taskId || null,
     cloud_job_id: remoteJob?.id || null,
     cloud_status: remoteStatus,
+    local_cleanup: cleanupResult,
   };
 }
 

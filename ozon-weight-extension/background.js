@@ -710,9 +710,13 @@ function buildHdUploadSnapshot(previous, patch = {}) {
 }
 
 function buildJobResultWithHdUpload(job, hdUpload) {
+  const previous = job?.result || {};
   return {
-    ...(job?.result || {}),
-    hdUpload
+    productId: previous.productId || previous.source_product_id || null,
+    title: previous.title || previous.name || null,
+    sourceUrl: previous.sourceUrl || null,
+    hdUpload,
+    localDataClearedAt: nowIso()
   };
 }
 

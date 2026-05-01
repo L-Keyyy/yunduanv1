@@ -218,6 +218,8 @@ async function buildProductStatusPayload(product, includeOzonStatus = true) {
     cloud_upload_job_id: product.cloud_upload_job_id || null,
     cloud_upload_status: product.cloud_upload_status || null,
     cloud_store_id: product.cloud_store_id || null,
+    local_data_cleared_at: product.local_data_cleared_at || null,
+    local_data_cleanup: product.local_data_cleanup || null,
     errors: product.errors,
     attributes_count: product.attributes_count || (product.cleaned_item?.attributes || []).length || 0,
     category_info: product.category_info || null,
@@ -639,6 +641,7 @@ router.get('/products', (req, res) => {
     status: product.status,
     price: product.price,
     images_count: product.images_count,
+    local_data_cleared_at: product.local_data_cleared_at || null,
     created_at: product.created_at,
     updated_at: product.updated_at,
   }));
