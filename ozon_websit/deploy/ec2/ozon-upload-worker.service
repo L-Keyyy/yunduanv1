@@ -10,7 +10,7 @@ EnvironmentFile=/home/ec2-user/ozon_backend/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=CELERY_WORKER_NAME=upload
 Environment=CELERY_QUEUES=upload
-Environment=CELERY_CONCURRENCY=8
+Environment=CELERY_CONCURRENCY=3
 ExecStart=/bin/sh /home/ec2-user/ozon_backend/start-worker.sh
 Restart=always
 RestartSec=5
