@@ -1,0 +1,38 @@
+{
+  "family": "ozon-management-job",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "<EXECUTION_ROLE_ARN>",
+  "taskRoleArn": "<TASK_ROLE_ARN>",
+  "containerDefinitions": [
+    {
+      "name": "job",
+      "image": "<ECR_IMAGE_URI>",
+      "essential": true,
+      "command": ["python", "job_runner.py", "sync-core", "--days", "7"],
+      "environment": [
+        { "name": "APP_ENV", "value": "production" },
+        { "name": "AUTO_CREATE_SCHEMA", "value": "false" },
+        { "name": "ENABLE_LOCAL_BOOTSTRAP", "value": "false" },
+        { "name": "DATABASE_URL", "value": "postgresql+psycopg2://ozon_user:change_me@<RDS_ENDPOINT>:5432/ozon" },
+        { "name": "REDIS_URL", "value": "redis://<REDIS_ENDPOINT>:6379/0" },
+        { "name": "CELERY_BROKER_URL", "value": "redis://<REDIS_ENDPOINT>:6379/0" },
+        { "name": "CELERY_RESULT_BACKEND", "value": "redis://<REDIS_ENDPOINT>:6379/0" },
+        { "name": "CHROME_DEVTOOLS_BASE", "value": "http://<CHROME_HOST>:9222" },
+        { "name": "SECRET_KEY", "value": "<SECRET_KEY>" },
+        { "name": "ADMIN_USERNAME", "value": "<ADMIN_USERNAME>" },
+        { "name": "ADMIN_PASSWORD", "value": "<ADMIN_PASSWORD>" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ozon-management-job",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python environments and cache
+.venv/
+.venv*/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+ozon.txt
+**/ozon.txt
+
+# Databases and local state
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+server/data/
+**/server/data/
+
+# Logs
+*.log
+*.err
+*.out
+
+# Build artifacts
+dist/
+build/
+coverage/
+.verify-dist/
+**/.verify-dist/
+*.tar
+.local-run/
+.playwright-cli/
+deploy_tmp_dist/
+**/deploy/**/rendered/
+
+# Runtime cache and generated output
+cache/
+**/cache/
+output/
+**/output/
+tmp/
+captures/
+screenshots/
+**/screenshots/
+/images/
+OZON_HD/images/
+OZON_HD/server/images/
+OZON_HD/protected/
+OZON_HD/ozon-product-*-data.json
+
+# Large/debug captures
+*.har
+tmp_*
+tmp-*
+copy-list-search-*
+checkout_weight_extracted.json
+what-to-sell.bundle.js
+aws-*.png
+ozon-page-panel-*.png
+CN.jpg
+RU.png
+!/ozon-weight-extension/CN.jpg
+!/ozon-weight-extension/RU.png
+checkout_req*_response.html
+checkout_req*_response.json
+addToCart_req*_request.txt
+addToCart_req*_response.json
+webAddToCart_req*_request.txt
+webAddToCart_req*_response.json
+req*-request.txt
+req*-response.txt
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,17 @@
+[Unit]
+Description=Ozon Browser Assist Chrome
+After=network.target
+
+[Service]
+User=ec2-user
+Environment=CHROME_BIN=/home/ec2-user/.local/chrome-for-testing/chrome-linux64/chrome
+Environment=CHROME_PROFILE_DIR=/home/ec2-user/chrome-profile
+Environment=DISPLAY=:99
+Environment=CHROME_REMOTE_DEBUGGING_ADDRESS=127.0.0.1
+Environment=CHROME_REMOTE_DEBUGGING_PORT=9222
+ExecStart=/bin/bash -lc 'mkdir -p "${CHROME_PROFILE_DIR}"; pkill -f "^Xvfb :99" >/dev/null 2>&1 || true; rm -f /tmp/.X99-lock; Xvfb :99 -screen 0 1440x900x24 -ac >/tmp/ozon-xvfb.log 2>&1 & sleep 1; exec "${CHROME_BIN}" --no-first-run --no-default-browser-check --disable-background-networking --disable-dev-shm-usage --disable-features=Translate,OptimizationHints,MediaRouter --remote-debugging-address="${CHROME_REMOTE_DEBUGGING_ADDRESS}" --remote-debugging-port="${CHROME_REMOTE_DEBUGGING_PORT}" --user-data-dir="${CHROME_PROFILE_DIR}" about:blank'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

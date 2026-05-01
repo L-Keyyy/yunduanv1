@@ -1,0 +1,21 @@
+{
+  "name": "ozon_hd",
+  "version": "1.0.0",
+  "description": "OZON 商品数据清洗与批量上货工具",
+  "main": "index.js",
+  "scripts": {
+    "clean": "node main.js",
+    "batch": "node batch_clean.js",
+    "upload": "node upload.js",
+    "check": "node upload.js --check",
+    "protect": "node scripts/protect-release.js",
+    "protect:stamp": "node scripts/protect-release.js --stamp-only"
+  },
+  "keywords": ["ozon", "seller", "product-import"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "javascript-obfuscator": "^4.1.1"
+  }
+}

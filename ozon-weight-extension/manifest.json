@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Ozon Weight MVP",
+  "version": "0.1.0",
+  "description": "Get package weight from the Ozon checkout flow for the current product.",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://www.luokeyu.xyz/*",
+    "https://www.luokeyu.xyz/*",
+    "http://15.134.99.199/*",
+    "https://15.134.99.199/*",
+    "http://52.63.119.7/*",
+    "https://52.63.119.7/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3001/*",
+    "http://localhost:3001/*",
+    "https://seller.ozon.ru/*",
+    "https://www.ozon.ru/*",
+    "https://ozon.ru/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ozon Weight MVP"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://seller.ozon.ru/*",
+        "https://www.ozon.ru/*",
+        "https://ozon.ru/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "ui.json",
+        "operation_bot.js",
+        "CN.jpg",
+        "RU.png"
+      ],
+      "matches": [
+        "https://seller.ozon.ru/*",
+        "https://www.ozon.ru/*",
+        "https://ozon.ru/*"
+      ]
+    }
+  ]
+}

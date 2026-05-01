@@ -1,0 +1,77 @@
+:root {
+  --h-brand: 257;
+
+  --c-surface-0: oklch(0.985 0.004 var(--h-brand));
+  --c-surface-1: oklch(0.995 0.002 var(--h-brand));
+  --c-surface-2: oklch(0.975 0.006 var(--h-brand));
+
+  --c-text-1: oklch(0.27 0.02 var(--h-brand));
+  --c-text-2: oklch(0.45 0.02 var(--h-brand));
+  --c-text-3: oklch(0.62 0.02 var(--h-brand));
+
+  --c-border-1: oklch(0.9 0.01 var(--h-brand));
+  --c-border-2: oklch(0.86 0.012 var(--h-brand));
+
+  --c-brand: oklch(0.63 0.19 var(--h-brand));
+  --c-brand-2: oklch(0.58 0.2 calc(var(--h-brand) - 8));
+  --c-brand-soft: oklch(0.92 0.05 var(--h-brand));
+
+  --c-danger: oklch(0.63 0.23 25);
+  --c-warning: oklch(0.76 0.17 75);
+  --c-success: oklch(0.73 0.17 150);
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+
+  --shadow-1: 0 1px 1px oklch(0.2 0.02 var(--h-brand) / 0.04),
+    0 6px 24px oklch(0.2 0.02 var(--h-brand) / 0.06);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 24px;
+
+  --line-sm: 1.25;
+  --line-md: 1.45;
+
+  --el-color-primary: var(--c-brand);
+  --el-color-primary-light-3: color-mix(in oklch, var(--c-brand) 70%, white);
+  --el-color-primary-light-5: color-mix(in oklch, var(--c-brand) 55%, white);
+  --el-color-primary-light-7: color-mix(in oklch, var(--c-brand) 35%, white);
+  --el-color-primary-light-8: color-mix(in oklch, var(--c-brand) 25%, white);
+  --el-color-primary-light-9: color-mix(in oklch, var(--c-brand) 14%, white);
+  --el-color-primary-dark-2: color-mix(in oklch, var(--c-brand) 82%, black);
+
+  --el-color-success: var(--c-success);
+  --el-color-warning: var(--c-warning);
+  --el-color-danger: var(--c-danger);
+
+  --el-bg-color: var(--c-surface-1);
+  --el-bg-color-page: var(--c-surface-0);
+  --el-border-color: var(--c-border-1);
+  --el-border-color-light: var(--c-border-1);
+  --el-border-color-lighter: var(--c-border-1);
+  --el-border-color-extra-light: var(--c-border-1);
+
+  --el-text-color-primary: var(--c-text-1);
+  --el-text-color-regular: var(--c-text-2);
+  --el-text-color-secondary: var(--c-text-3);
+  --el-text-color-placeholder: color-mix(in oklch, var(--c-text-3) 75%, white);
+
+  --el-border-radius-base: var(--radius-xs);
+  --el-border-radius-small: var(--radius-xs);
+
+  --el-font-size-base: var(--font-size-md);
+}
+

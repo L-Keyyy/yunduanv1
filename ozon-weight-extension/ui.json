@@ -1,0 +1,14 @@
+{
+  "title": "Product Analytics",
+  "sections": {
+    "sales": "Sales",
+    "funnel": "Traffic Funnel",
+    "logistics": "Logistics",
+    "campaign": "Campaign"
+  },
+  "buttons": {
+    "source": "Source Product",
+    "follow": "Upload Product",
+    "collect": "Collect Product"
+  }
+}

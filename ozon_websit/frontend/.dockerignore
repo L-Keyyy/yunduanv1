@@ -1,0 +1,5 @@
+node_modules/
+dist/
+dist.tar
+.verify-dist/
+npm-debug.log*

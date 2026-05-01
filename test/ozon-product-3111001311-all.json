@@ -1,0 +1,239 @@
+{
+  "extractionType": "extract-all",
+  "extractedAt": "2026-04-12T07:08:17.952Z",
+  "sourceUrl": "https://www.ozon.ru/product/odnopedal-elektropianino-sintezator-elektrogitary-midi-3111001311/?at=BrtzmG5XMiggk7PLUlor6Lof6OpPzyiwQvNYLsW2o5n4",
+  "productId": 3111001311,
+  "title": "Однопедаль электропианино, синтезатор электрогитары MIDI",
+  "breadcrumbs": [
+    {
+      "text": "Хобби и творчество",
+      "url": "https://www.ozon.ru/category/hobbi-i-tvorchestvo-13500/"
+    },
+    {
+      "text": "Музыкальные инструменты",
+      "url": "https://www.ozon.ru/category/muzykalnye-instrumenty-13917/"
+    },
+    {
+      "text": "Гитары и оборудование",
+      "url": "https://www.ozon.ru/category/gitary-i-aksessuary-13924/"
+    },
+    {
+      "text": "Гитарное усиление и педали эффектов",
+      "url": "https://www.ozon.ru/category/gitarnoe-usilenie-13929/"
+    },
+    {
+      "text": "MOSEN",
+      "url": "https://www.ozon.ru/category/gitarnoe-usilenie-13929/mosen-101919509/"
+    }
+  ],
+  "brand": null,
+  "seller": {
+    "name": "Глобальные музыкальны...",
+    "url": "https://www.ozon.ru/seller/globalnye-muzykalnye-instrumenty/",
+    "rating": "4.9",
+    "sellerId": "3532773"
+  },
+  "marketingLabels": [
+    "Постоплата",
+    "Цена что надо"
+  ],
+  "hashtags": [
+    "#Рояльнапедали"
+  ],
+  "description": {
+    "title": "Описание",
+    "html": "<div class=\"pdp_aq5\"><h2 class=\"pdp_a4q\">Описание</h2> <!----></div> <div><!----> <div class=\"\"><div class=\"pdp_qa1\" style=\"max-height: 700px;\"><div><div class=\"RA-a\"><div class=\"RA-e0\"><div><div class=\"RA-j4 RA-j8 RA-k5 RA-e2\"><div class=\"RA-k1\"><img loading=\"lazy\" fetchpriority=\"low\" src=\"https://ir.ozone.ru/s3/multimedia-1-h/ww1200/8419193837.jpg\" crossorigin=\"anonymous\" class=\"RA-k2 c95_3_4-a\"></div></div></div></div></div></div></div> <!----> <!----></div> <!----></div>",
+    "text": "Описание",
+    "rawSectionHtml": "<div class=\"pdp_aq5\"><h2 class=\"pdp_a4q\">Описание</h2> <!----></div> <div><!----> <div class=\"\"><div class=\"pdp_qa1\" style=\"max-height: 700px;\"><div><div class=\"RA-a\"><div class=\"RA-e0\"><div><div class=\"RA-j4 RA-j8 RA-k5 RA-e2\"><div class=\"RA-k1\"><img loading=\"lazy\" fetchpriority=\"low\" src=\"https://ir.ozone.ru/s3/multimedia-1-h/ww1200/8419193837.jpg\" crossorigin=\"anonymous\" class=\"RA-k2 c95_3_4-a\"></div></div></div></div></div></div></div> <!----> <!----></div> <!----></div>",
+    "images": [
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-h/ww1200/8419193837.jpg",
+        "alt": "",
+        "title": ""
+      }
+    ],
+    "videos": []
+  },
+  "characteristics": [
+    {
+      "name": "Артикул",
+      "valueText": "3111001311",
+      "values": [
+        "3111001311"
+      ]
+    },
+    {
+      "name": "Тип",
+      "valueText": "Аксессуары для педали эффектов",
+      "values": [
+        "Аксессуары для педали эффектов"
+      ]
+    },
+    {
+      "name": "Цвет",
+      "valueText": "Черный матовый",
+      "values": [
+        "Черный матовый"
+      ]
+    },
+    {
+      "name": "Количество в упаковке, шт",
+      "valueText": "1",
+      "values": [
+        "1"
+      ]
+    },
+    {
+      "name": "Партномер",
+      "valueText": "MS-36B",
+      "values": [
+        "MS-36B"
+      ]
+    },
+    {
+      "name": "Комплектация",
+      "valueText": "ног",
+      "values": [
+        "ног"
+      ]
+    },
+    {
+      "name": "Размеры, мм",
+      "valueText": "1600",
+      "values": [
+        "1600"
+      ]
+    },
+    {
+      "name": "Вес товара, г",
+      "valueText": "900",
+      "values": [
+        "900"
+      ]
+    },
+    {
+      "name": "Страна-изготовитель",
+      "valueText": "Китай",
+      "values": [
+        "Китай"
+      ]
+    }
+  ],
+  "characteristicsUrl": "https://www.ozon.ru/product/odnopedal-elektropianino-sintezator-elektrogitary-midi-3111001311/features/",
+  "shortCharacteristics": [
+    {
+      "id": "Type_0",
+      "name": "Тип",
+      "values": [
+        "Аксессуары для педали эффектов"
+      ]
+    },
+    {
+      "id": "Color_1",
+      "name": "Цвет",
+      "values": [
+        "Черный матовый"
+      ]
+    },
+    {
+      "id": "Qty_3",
+      "name": "Количество в упаковке, шт",
+      "values": [
+        "1"
+      ]
+    },
+    {
+      "id": "Model_4",
+      "name": "Партномер",
+      "values": [
+        "MS-36B"
+      ]
+    },
+    {
+      "id": "Package_5",
+      "name": "Комплектация",
+      "values": [
+        "ног"
+      ]
+    }
+  ],
+  "gallery": {
+    "sku": "3111001311",
+    "coverImage": "https://ir.ozone.ru/s3/multimedia-1-x/8419254585.jpg",
+    "images": [
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-x/8419254585.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #1"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-3/8419254519.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #2"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-w/8419254944.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #3"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-2/8419254518.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #4"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-y/8419255054.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #5"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-l/8419254717.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #6"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-k/8419254500.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #7"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-p/8419254613.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #8"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-6/8419257798.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #9"
+      },
+      {
+        "src": "https://ir.ozone.ru/s3/multimedia-1-4/8419254592.jpg",
+        "alt": "Однопедаль электропианино, синтезатор электрогитары MIDI #10"
+      }
+    ],
+    "videos": [
+      {
+        "name": "",
+        "url": "https://cdnvideo.v.ozone.ru/vod/video-64/01KBRTH74SAYY0FY7VQDJQ9XAJ/asset_0_h264.mp4?type=pdp",
+        "coverUrl": "https://ir.ozone.ru/s3/video-64/01KBRTH74SAYY0FY7VQDJQ9XAJ/cover/cover.jpg"
+      }
+    ],
+    "videoCover": {}
+  },
+  "stats": {
+    "marketingLabelCount": 2,
+    "hashtagCount": 1,
+    "characteristicCount": 9,
+    "shortCharacteristicCount": 5,
+    "galleryImageCount": 10,
+    "galleryVideoCount": 1,
+    "descriptionImageCount": 1,
+    "descriptionVideoCount": 0
+  },
+  "packageWeight": {
+    "productId": 3111001311,
+    "productTitle": "Однопедаль электропианино, синтезатор электрогитары MIDI",
+    "sourceUrl": "https://www.ozon.ru/gocheckout?start=0&src=pdp",
+    "method": "one-click-request",
+    "weightKg": 1.5,
+    "weightText": "1.5 kg",
+    "orderInfo": "1 товар • 1.5 кг",
+    "itemCount": 1,
+    "totalStateId": "state-total-3615409-default-1",
+    "splitStateId": "state-rfbsSplit-636504-default-1",
+    "deliveryText": "Доставка в Пункт Ozon",
+    "extractedAt": "2026-04-12T07:08:18.737Z",
+    "warning": null
+  }
+}
