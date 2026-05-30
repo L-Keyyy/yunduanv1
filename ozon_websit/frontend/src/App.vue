@@ -8,7 +8,7 @@
       </div>
       <el-menu :default-active="$route.path" class="el-menu-vertical" router>
         <el-menu-item index="/dashboard">
-          <template #title>仪表盘</template>
+          <template #title>店铺数据</template>
         </el-menu-item>
         <el-menu-item index="/store-management">
           <template #title>店铺管理</template>
@@ -103,7 +103,12 @@
       </el-header>
 
       <el-main>
-        <router-view />
+        <router-view v-slot="{ Component, route: currentRoute }">
+          <component
+            :is="Component"
+            :key="routeComponentKey(currentRoute)"
+          />
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -131,6 +136,7 @@ let pollInterval: number | null = null
 const isPublicRoute = computed(() => Boolean(route.meta.public))
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 const isStandaloneRoute = computed(() => isPublicRoute.value || isAdminRoute.value)
+const routeComponentKey = (currentRoute: any) => String(currentRoute.name || currentRoute.path)
 
 const refreshAuthState = () => {
   usernameLabel.value = getAuthUsername() || '未登录'
