@@ -353,6 +353,8 @@ class Store(Base):
     total_limit = Column(String, default="0 / 8000")
     watermark = Column(String, default="disabled")
     warehouse_info = Column(String, nullable=True)
+    activity_actions_cache = Column(Text, nullable=True)
+    activity_actions_synced_at = Column(DateTime(timezone=True), nullable=True)
     cookie_status = Column(String, default="unknown")
 
     status_update_time = Column(
@@ -459,6 +461,9 @@ class Product(Base):
     auto_restock = Column(Boolean, default=False, nullable=False)
     scheduled_shelf = Column(String, nullable=True)
     warehouse_name = Column(String, nullable=True)
+    activity_sync_state = Column(String, default="NO", nullable=False, index=True)
+    activity_sync_actions = Column(Text, nullable=True)
+    activity_synced_at = Column(DateTime(timezone=True), nullable=True)
     price = Column(Float, default=0.0)
     display_price = Column(Float, default=0.0)
     profit = Column(Float, default=0.0)

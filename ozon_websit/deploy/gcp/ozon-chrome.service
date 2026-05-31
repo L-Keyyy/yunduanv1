@@ -3,9 +3,9 @@ Description=Ozon Browser Assist Chrome
 After=network.target
 
 [Service]
-User=ec2-user
-Environment=CHROME_BIN=/home/ec2-user/.local/chrome-for-testing/chrome-linux64/chrome
-Environment=CHROME_PROFILE_DIR=/home/ec2-user/chrome-profile
+User=ozon
+Environment=CHROME_BIN=/opt/ozon/chrome-for-testing/chrome-linux64/chrome
+Environment=CHROME_PROFILE_DIR=/opt/ozon/chrome-profile
 Environment=DISPLAY=:99
 Environment=CHROME_REMOTE_DEBUGGING_ADDRESS=127.0.0.1
 Environment=CHROME_REMOTE_DEBUGGING_PORT=9222

@@ -41,7 +41,18 @@
     <el-row :gutter="16" class="chart-grid">
       <el-col :xs="24" :lg="24">
         <el-card shadow="never" class="chart-card">
-          <div class="card-title">成功上传 SKU 与销量趋势</div>
+          <div class="chart-title-row">
+            <div class="card-title">成功上传 SKU 与销量趋势</div>
+            <el-select v-model="selectedStoreId" class="chart-store-select" size="small" @change="loadDashboard">
+              <el-option :label="'全部店铺'" :value="ALL_STORES_VALUE" />
+              <el-option
+                v-for="store in allStores"
+                :key="store.id"
+                :label="store.store_name"
+                :value="store.id"
+              />
+            </el-select>
+          </div>
           <div ref="uploadChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
@@ -109,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import * as echarts from 'echarts'
 import { fetchCategoryAnalytics, type AnalyticsChartItem } from '../api/analytics'
 import {
@@ -119,6 +130,11 @@ import {
   type DashboardTrends,
 } from '../api/dashboard'
 import { fetchStores } from '../api/store'
+import { RESOURCE_CACHE_TTL, isResourceFresh, readResourceCache, writeResourceCache } from '../utils/resourceCache'
+
+defineOptions({
+  name: 'Dashboard',
+})
 
 type StoreItem = {
   id: number
@@ -174,6 +190,17 @@ const categoryCharts = ref({
   orders: [] as AnalyticsChartItem[],
   skus: [] as AnalyticsChartItem[],
 })
+const dashboardReady = ref(false)
+
+type DashboardCachePayload = {
+  summary: DashboardSummary
+  trends: DashboardTrends
+  categoryCharts: {
+    sales: AnalyticsChartItem[]
+    orders: AnalyticsChartItem[]
+    skus: AnalyticsChartItem[]
+  }
+}
 
 const uploadChartRef = ref<HTMLElement | null>(null)
 const salesPieChartRef = ref<HTMLElement | null>(null)
@@ -402,28 +429,67 @@ const loadStores = async (refreshStatus = false) => {
   }
 }
 
-const loadDashboard = async () => {
-  loading.value = true
+const dashboardCacheParts = () => [resolvedStoreId.value ?? 'all', selectedDays.value]
+
+const applyDashboardPayload = async (payload: DashboardCachePayload) => {
+  summary.value = payload.summary
+  trends.value = payload.trends
+  categoryCharts.value = payload.categoryCharts
+  dashboardReady.value = true
+  await nextTick()
+  initCharts()
+  renderCharts()
+}
+
+const loadDashboard = async (forceRefresh = false, options: { background?: boolean } = {}) => {
+  const shouldForceRefresh = forceRefresh === true
+  const cacheParts = dashboardCacheParts()
+  const cached = readResourceCache<DashboardCachePayload>('dashboard:data', cacheParts)
+  if (cached && !shouldForceRefresh) {
+    await applyDashboardPayload(cached.data)
+    if (isResourceFresh(cached, RESOURCE_CACHE_TTL.dashboard)) {
+      return
+    }
+  }
+
+  const showLoading = !options.background && (!cached || shouldForceRefresh)
+  if (showLoading) {
+    loading.value = true
+  }
   try {
     const [summaryData, trendData, analyticsData] = await Promise.all([
       fetchDashboardSummary(resolvedStoreId.value),
       fetchDashboardTrends(selectedDays.value, resolvedStoreId.value),
       fetchCategoryAnalytics(selectedDays.value, '', resolvedStoreId.value),
     ])
-    summary.value = summaryData
-    trends.value = trendData
-    categoryCharts.value = analyticsData.charts
-    await nextTick()
-    initCharts()
-    renderCharts()
+    const payload = {
+      summary: summaryData,
+      trends: trendData,
+      categoryCharts: analyticsData.charts,
+    }
+    writeResourceCache('dashboard:data', cacheParts, payload)
+    await applyDashboardPayload(payload)
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
 const handleRefresh = async () => {
   await loadStores(true)
-  await loadDashboard()
+  await loadDashboard(true)
+}
+
+const isDashboardCacheExpired = () => {
+  const cached = readResourceCache<DashboardCachePayload>('dashboard:data', dashboardCacheParts())
+  return !isResourceFresh(cached, RESOURCE_CACHE_TTL.dashboard)
+}
+
+const handleDashboardOpen = async (options: { background?: boolean } = {}) => {
+  const expired = isDashboardCacheExpired()
+  await loadStores(expired)
+  await loadDashboard(false, options)
 }
 
 const handleResize = () => {
@@ -434,9 +500,20 @@ const handleResize = () => {
 }
 
 onMounted(async () => {
-  await loadStores(true)
-  await loadDashboard()
+  await handleDashboardOpen()
+})
+
+onActivated(async () => {
   window.addEventListener('resize', handleResize)
+  if (dashboardReady.value && isDashboardCacheExpired()) {
+    void handleDashboardOpen({ background: true })
+  }
+  await nextTick()
+  handleResize()
+})
+
+onDeactivated(() => {
+  window.removeEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
@@ -558,6 +635,22 @@ onUnmounted(() => {
   margin-bottom: 12px;
 }
 
+.chart-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chart-title-row .card-title {
+  margin-bottom: 0;
+}
+
+.chart-store-select {
+  width: 220px;
+}
+
 .chart-box {
   width: 100%;
   height: 320px;
@@ -601,6 +694,10 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .store-select {
+    width: 100%;
+  }
+
+  .chart-store-select {
     width: 100%;
   }
 

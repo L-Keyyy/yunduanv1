@@ -1516,6 +1516,24 @@ async def build_upload_item(
                 }
             )
 
+    required_model_attr = next(
+        (item for item in formatted_attributes if int(item.get("id") or 0) == MODEL_ATTRIBUTE_ID),
+        None,
+    )
+    if not has_meaningful_attribute(required_model_attr):
+        model_payload = [{"dictionary_value_id": 0, "value": model_value}]
+        if required_model_attr:
+            required_model_attr["complex_id"] = 0
+            required_model_attr["values"] = model_payload
+        else:
+            formatted_attributes.append(
+                {
+                    "id": MODEL_ATTRIBUTE_ID,
+                    "complex_id": 0,
+                    "values": model_payload,
+                }
+            )
+
     dimensions = extract_preferred_dimensions(characteristics)
     weight_info = extract_weight(characteristics, scraped_data)
     image_info = extract_images(scraped_data)

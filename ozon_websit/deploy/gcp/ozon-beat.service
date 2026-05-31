@@ -4,11 +4,11 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=ec2-user
-WorkingDirectory=/home/ec2-user/ozon_backend
-EnvironmentFile=/home/ec2-user/ozon_backend/.env
+User=ozon
+WorkingDirectory=/opt/ozon/backend
+EnvironmentFile=/opt/ozon/backend/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/bin/sh /home/ec2-user/ozon_backend/start-beat.sh
+ExecStart=/bin/sh /opt/ozon/backend/start-beat.sh
 Restart=always
 RestartSec=5
 MemoryHigh=192M

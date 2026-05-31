@@ -1,8 +1,15 @@
 import apiClient from './client'
 
-export const getActions = async (storeId?: number) => {
+export const getActions = async (
+  storeId?: number,
+  options: { forceRefresh?: boolean; syncProducts?: boolean } = {}
+) => {
   const response = await apiClient.get('/activities/actions', {
-    params: { store_id: storeId },
+    params: {
+      store_id: storeId,
+      force_refresh: options.forceRefresh ? 1 : 0,
+      sync_products: options.syncProducts ? 1 : 0,
+    },
   })
   return response.data
 }

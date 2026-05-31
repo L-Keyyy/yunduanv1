@@ -51,37 +51,37 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('../views/Dashboard.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/store-management',
     name: 'StoreManagement',
     component: () => import('../views/StoreManagement.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/upload-records',
     name: 'UploadRecords',
     component: () => import('../views/CollectionUpload.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/products',
     name: 'Products',
     component: () => import('../views/Products.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/inventory',
     name: 'Inventory',
     component: () => import('../views/Inventory.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/orders',
     name: 'Orders',
     component: () => import('../views/Orders.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/warehouse',
@@ -91,43 +91,43 @@ const routes = [
     path: '/activities',
     name: 'Activities',
     component: () => import('../views/Activities.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/messages',
     name: 'Messages',
     component: () => import('../views/Messages.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/data-analysis',
     name: 'DataAnalysis',
     component: () => import('../views/DataAnalysis.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/commissions',
     name: 'Commissions',
     component: () => import('../views/Commissions.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/hot-tags',
     name: 'HotTags',
     component: () => import('../views/HotTags.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/pricing-calculator',
     name: 'PricingCalculator',
     component: () => import('../views/PricingCalculator.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: '/cloud-follow',
     name: 'CloudFollow',
     component: () => import('../views/CloudFollow.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   }
 ]
 

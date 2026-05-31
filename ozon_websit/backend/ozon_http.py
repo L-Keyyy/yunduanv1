@@ -24,12 +24,14 @@ _POISONED_NETWORKS = (
 _DNS_CACHE: Dict[str, tuple[float, List[str]]] = {}
 
 
-def build_ozon_headers(client_id: str, api_key: str) -> Dict[str, str]:
+def build_ozon_headers(
+    client_id: str, api_key: str, accept: str = "application/json"
+) -> Dict[str, str]:
     return {
         "Client-Id": client_id,
         "Api-Key": api_key,
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Accept": accept,
     }
 
 
@@ -139,7 +141,22 @@ def _decode_response_body(response: urllib3.BaseHTTPResponse) -> str:
     return response.data.decode("utf-8", errors="replace")
 
 
-def _format_result(endpoint: str, response: urllib3.BaseHTTPResponse) -> Dict[str, Any]:
+def _format_result(
+    endpoint: str,
+    response: urllib3.BaseHTTPResponse,
+    response_format: str = "json",
+) -> Dict[str, Any]:
+    if response.status < 400 and response_format == "binary":
+        return {
+            "ok": True,
+            "status_code": response.status,
+            "endpoint": endpoint,
+            "data": {
+                "content": response.data,
+                "content_type": response.headers.get("Content-Type"),
+            },
+        }
+
     body_text = _decode_response_body(response)
     try:
         body_data: Any = json.loads(body_text) if body_text else {}
@@ -172,6 +189,7 @@ def _request_via_ip(
     headers: Dict[str, str],
     payload: Optional[Dict[str, Any]],
     timeout: float,
+    response_format: str,
 ) -> Dict[str, Any]:
     pool = urllib3.HTTPSConnectionPool(
         ip,
@@ -185,7 +203,7 @@ def _request_via_ip(
     request_headers["Host"] = host
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     response = pool.urlopen(method, endpoint, body=body, headers=request_headers)
-    return _format_result(endpoint, response)
+    return _format_result(endpoint, response, response_format=response_format)
 
 
 def request_ozon_api_sync(
@@ -196,9 +214,11 @@ def request_ozon_api_sync(
     api_key: str,
     payload: Optional[Dict[str, Any]] = None,
     timeout: float = 20.0,
+    accept: str = "application/json",
+    response_format: str = "json",
 ) -> Dict[str, Any]:
     host = OZON_API_HOST
-    headers = build_ozon_headers(client_id, api_key)
+    headers = build_ozon_headers(client_id, api_key, accept=accept)
     resolved_ips = resolve_api_host_ips(host, timeout=timeout)
     errors: List[str] = []
 
@@ -214,6 +234,7 @@ def request_ozon_api_sync(
                 headers=headers,
                 payload=payload,
                 timeout=timeout,
+                response_format=response_format,
             )
         except Exception as exc:
             errors.append(f"{ip}: {type(exc).__name__}: {exc}")
@@ -235,6 +256,8 @@ async def request_ozon_api(
     api_key: str,
     payload: Optional[Dict[str, Any]] = None,
     timeout: float = 20.0,
+    accept: str = "application/json",
+    response_format: str = "json",
 ) -> Dict[str, Any]:
     return await asyncio.to_thread(
         request_ozon_api_sync,
@@ -244,4 +267,6 @@ async def request_ozon_api(
         api_key=api_key,
         payload=payload,
         timeout=timeout,
+        accept=accept,
+        response_format=response_format,
     )

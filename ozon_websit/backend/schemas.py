@@ -476,6 +476,8 @@ class ExtensionCloudFollowResultRequest(BaseModel):
     ok: bool = True
     product_data: Optional[Dict[str, Any]] = None
     product_data_list: Optional[List[Dict[str, Any]]] = None
+    entrypoint_bundle: Optional[Dict[str, Any]] = None
+    entrypoint_bundle_list: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
 
 
@@ -524,8 +526,7 @@ class StoreWarehouseOption(BaseModel):
 class StoreWarehouseSyncResponse(BaseModel):
     message: str
     store_id: int
-    company_id: int
-    seller_url: str
+    synced_inventory_items: int = 0
     warehouses: List[StoreWarehouseOption] = Field(default_factory=list)
 
 
@@ -549,6 +550,9 @@ class ProductResponse(BaseModel):
     auto_restock: bool
     scheduled_shelf: Optional[str] = None
     warehouse_name: Optional[str] = None
+    activity_sync_state: str = "NO"
+    activity_sync_actions: List[str] = Field(default_factory=list)
+    activity_synced_at: Optional[datetime] = None
     price: float
     display_price: float
     profit: float
@@ -611,6 +615,7 @@ class ProductBatchStockRequest(ProductBatchIdsRequest):
     sku: Optional[str] = None
     article_no: Optional[str] = None
     warehouse_name: Optional[str] = None
+    stock_state: Optional[str] = None
     backup_status: Optional[str] = None
     archive_status: Optional[str] = "unarchived"
 
@@ -788,6 +793,107 @@ class TaskStatusResponse(BaseModel):
     failed: bool
     result: Optional[Any] = None
     error: Optional[str] = None
+
+
+class ExtensionSyncProductItem(BaseModel):
+    offer_id: Optional[str] = None
+    sku: Optional[str] = None
+    article_no: Optional[str] = None
+    product_name: Optional[str] = None
+    primary_image: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    stock: Optional[int] = None
+    price: Optional[float] = None
+    status: Optional[str] = None
+
+
+class ExtensionSyncInventoryItem(BaseModel):
+    offer_id: Optional[str] = None
+    sku: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    stock: Optional[int] = None
+    backup_stock: Optional[int] = None
+
+
+class ExtensionSyncOrderItem(BaseModel):
+    posting_number: str
+    status: Optional[str] = None
+    status_label: Optional[str] = None
+    product_name: Optional[str] = None
+    product_image: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    deadline_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class ExtensionSyncActivityItem(BaseModel):
+    offer_id: Optional[str] = None
+    sku: Optional[str] = None
+    action_id: Optional[int] = None
+    action_title: Optional[str] = None
+
+
+class ExtensionCloudSyncRequest(BaseModel):
+    store_id: Optional[int] = None
+    products: List[ExtensionSyncProductItem] = Field(default_factory=list)
+    inventory: List[ExtensionSyncInventoryItem] = Field(default_factory=list)
+    orders: List[ExtensionSyncOrderItem] = Field(default_factory=list)
+    activities: List[ExtensionSyncActivityItem] = Field(default_factory=list)
+    full_activity_refresh: bool = False
+    collected_at: Optional[datetime] = None
+
+
+class ExtensionCloudSyncResponse(BaseModel):
+    ok: bool = True
+    store_id: int
+    synced_products: int = 0
+    synced_inventory: int = 0
+    synced_orders: int = 0
+    synced_activities: int = 0
+    full_activity_refresh: bool = False
+    collected_at: Optional[datetime] = None
+
+
+class ExtensionDailyAnalyticsUploadRequest(BaseModel):
+    store_id: Optional[int] = None
+    source: str = "extension_daily_analytics"
+    uploaded_at: Optional[datetime] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    records: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ExtensionDailyAnalyticsUploadResponse(BaseModel):
+    ok: bool = True
+    store_id: int
+    source: str = "extension_daily_analytics"
+    uploaded_at: datetime
+    received_count: int = 0
+    stored_count: int = 0
+
+
+class ExtensionHotTagsUploadRequest(BaseModel):
+    source: str = "extension_hot_tags_upload"
+    seller_url: Optional[str] = None
+    company_id: Optional[int] = None
+    overall_total: int = 0
+    fetched_total: int = 0
+    visible_dynamics_available_count: int = 0
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    query_groups: List[Dict[str, Any]] = Field(default_factory=list)
+    groups: List[str] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class ExtensionHotTagsUploadResponse(BaseModel):
+    ok: bool = True
+    source: str = "extension_hot_tags_upload"
+    company_id: Optional[int] = None
+    uploaded_at: datetime
+    received_count: int = 0
+    stored_count: int = 0
 
 
 class AdminSyncScheduleResponse(BaseModel):

@@ -11,10 +11,10 @@ from celery_app import celery_app
 from database import SessionLocal, engine
 import models
 from main import (
-    _run_cloud_follow_submit_workflow,
-    _fetch_seller_warehouses_from_browser,
+    _sync_store_activity_membership,
     _sync_products_from_upload_jobs,
     _sync_store_orders,
+    _sync_store_warehouses_from_ozon,
     _sync_store_products_from_ozon,
     dispatch_upload_jobs,
     poll_upload_jobs,
@@ -25,6 +25,8 @@ from main import (
 from ozon_client import verify_ozon_credentials
 
 logger = get_task_logger(__name__)
+AUTO_ORDER_SYNC_LOOKBACK_DAYS = 7
+AUTO_ORDER_SYNC_OVERLAP_MINUTES = 30
 
 
 def _ensure_sync_task_tables() -> None:
@@ -157,6 +159,8 @@ def run_sync_orders(
     days: int = 30,
     user_owner: Optional[str] = None,
     tenant_id: Optional[int] = None,
+    incremental: bool = False,
+    overlap_minutes: int = 0,
 ) -> Dict[str, Any]:
     db = SessionLocal()
     try:
@@ -175,7 +179,15 @@ def run_sync_orders(
         results: List[Dict[str, Any]] = []
 
         for store in stores:
-            result = asyncio.run(_sync_store_orders(db, store, days))
+            result = asyncio.run(
+                _sync_store_orders(
+                    db,
+                    store,
+                    days,
+                    incremental=incremental,
+                    overlap_minutes=overlap_minutes,
+                )
+            )
             results.append(result)
             if result.get("ok"):
                 synced_total += int(result.get("synced", 0))
@@ -185,11 +197,16 @@ def run_sync_orders(
         db.commit()
         return {
             "ok": True,
-            "message": f"Synchronized {synced_total} FBS order(s)",
+            "message": (
+                f"Synchronized {synced_total} FBS order(s)"
+                if not incremental
+                else f"Incremental synchronized {synced_total} FBS order(s)"
+            ),
             "synced_orders": synced_total,
             "stores": len(stores),
             "skipped": skipped,
             "results": results,
+            "incremental": bool(incremental),
         }
     except Exception:
         db.rollback()
@@ -198,7 +215,7 @@ def run_sync_orders(
         db.close()
 
 
-def run_sync_browser_warehouses(
+def run_sync_warehouses(
     store_id: int,
     user_owner: Optional[str] = None,
     tenant_id: Optional[int] = None,
@@ -224,29 +241,10 @@ def run_sync_browser_warehouses(
                 "warehouses": [],
             }
 
-        seller_payload = _fetch_seller_warehouses_from_browser()
-        names: List[str] = []
-        seen_names = set()
-        for warehouse in seller_payload["warehouses"]:
-            name = str(warehouse.get("name") or "").strip()
-            if not name or name in seen_names:
-                continue
-            seen_names.add(name)
-            names.append(name)
-
-        store.warehouse_info = "\n".join(names)
-        store.cookie_status = "active"
+        result = asyncio.run(_sync_store_warehouses_from_ozon(db, store))
         db.commit()
-
-        return {
-            "ok": True,
-            "message": f"Synchronized {len(names)} Ozon warehouse(s) from browser",
-            "store_id": store.id,
-            "store_name": store.store_name,
-            "company_id": seller_payload["company_id"],
-            "seller_url": seller_payload["seller_url"],
-            "warehouses": seller_payload["warehouses"],
-        }
+        result["store_name"] = store.store_name
+        return result
     except Exception:
         db.rollback()
         raise
@@ -274,57 +272,134 @@ def run_sync_core(
     }
 
 
-def run_cloud_follow_submit(
-    *,
-    store_id: int,
-    reference: str,
-    include_variants: bool = False,
-    max_variants: int = 20,
-    price: Optional[Any] = None,
-    old_price: Optional[Any] = None,
-    follow_min_price: Optional[Any] = None,
-    model: Optional[str] = None,
-    use_browser_session: bool = True,
-    preferred_url_fragment: Optional[str] = None,
-    front_cookie: Optional[str] = None,
-    user_agent: Optional[str] = None,
+def run_login_auto_sync(
+    days: int = 30,
     user_owner: Optional[str] = None,
     tenant_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     db = SessionLocal()
     try:
-        stores = _select_stores(
-            db,
-            store_id=int(store_id),
-            user_owner=user_owner,
-            tenant_id=tenant_id,
-        )
-        if not stores:
-            raise ValueError("Store not found or not accessible for current tenant/user")
-        store = stores[0]
-        result = asyncio.run(
-            _run_cloud_follow_submit_workflow(
-                db=db,
-                store=store,
-                reference=reference,
-                include_variants=bool(include_variants),
-                max_variants=int(max_variants or 20),
-                price=price,
-                old_price=old_price,
-                follow_min_price=follow_min_price,
-                model=model,
-                use_browser_session=bool(use_browser_session),
-                preferred_url_fragment=preferred_url_fragment,
-                front_cookie=front_cookie,
-                user_agent=user_agent,
+        stores = _select_stores(db, user_owner=user_owner, tenant_id=tenant_id)
+        activity_results: List[Dict[str, Any]] = []
+        activity_failures: List[str] = []
+        for store in stores:
+            result = asyncio.run(
+                _sync_store_activity_membership(
+                    db,
+                    store,
+                    full_refresh=True,
+                )
             )
-        )
-        return result
+            activity_results.append(result)
+            if not result.get("ok"):
+                activity_failures.append(
+                    f"{store.store_name}: {str(result.get('error') or 'activity_sync_failed')}"
+                )
+        db.commit()
     except Exception:
         db.rollback()
         raise
     finally:
         db.close()
+
+    return {
+        "ok": not activity_failures,
+        "message": "Login auto sync completed (activities only)",
+        "activity_sync": {
+            "stores": len(activity_results),
+            "failed": activity_failures,
+            "results": activity_results,
+        },
+    }
+
+
+def _order_sync_principals(db) -> List[Dict[str, Any]]:
+    stores = db.query(models.Store).order_by(models.Store.id.asc()).all()
+    principals: List[Dict[str, Any]] = []
+    seen_tenants: set[int] = set()
+    seen_users: set[str] = set()
+
+    for store in stores:
+        tenant_id = store.tenant_id
+        if tenant_id is not None:
+            if int(tenant_id) in seen_tenants:
+                continue
+            seen_tenants.add(int(tenant_id))
+            principals.append(
+                {
+                    "scope": f"tenant:{tenant_id}",
+                    "tenant_id": int(tenant_id),
+                    "user_owner": None,
+                }
+            )
+            continue
+
+        username = str(store.user_owner or "").strip()
+        if not username or username in seen_users:
+            continue
+        seen_users.add(username)
+        principals.append(
+            {
+                "scope": f"user:{username}",
+                "tenant_id": None,
+                "user_owner": username,
+            }
+        )
+    return principals
+
+
+def run_periodic_incremental_order_sync(
+    days: int = AUTO_ORDER_SYNC_LOOKBACK_DAYS,
+    overlap_minutes: int = AUTO_ORDER_SYNC_OVERLAP_MINUTES,
+) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        principals = _order_sync_principals(db)
+    finally:
+        db.close()
+
+    results: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    synced_total = 0
+
+    for principal in principals:
+        tenant_id = principal.get("tenant_id")
+        user_owner = principal.get("user_owner")
+        scope = str(principal.get("scope") or "unknown")
+        try:
+            result = run_sync_orders(
+                days=max(1, min(int(days or 1), 365)),
+                tenant_id=int(tenant_id) if tenant_id is not None else None,
+                user_owner=str(user_owner) if user_owner else None,
+                incremental=True,
+                overlap_minutes=max(0, int(overlap_minutes or 0)),
+            )
+            results.append(
+                {
+                    "scope": scope,
+                    "ok": bool(result.get("ok", False)),
+                    "synced_orders": int(result.get("synced_orders", 0)),
+                    "stores": int(result.get("stores", 0)),
+                    "skipped": result.get("skipped", []),
+                }
+            )
+            if result.get("ok"):
+                synced_total += int(result.get("synced_orders", 0))
+            else:
+                skipped.append(f"{scope}: {str(result.get('message') or 'sync_failed')}")
+        except Exception as exc:
+            skipped.append(f"{scope}: {exc}")
+            results.append({"scope": scope, "ok": False, "error": str(exc)})
+
+    return {
+        "ok": len(skipped) == 0,
+        "message": f"Periodic incremental order sync finished for {len(principals)} principal(s)",
+        "principals": len(principals),
+        "synced_orders": synced_total,
+        "skipped": skipped,
+        "results": results,
+        "incremental": True,
+    }
 
 
 def _next_run_at(interval_minutes: int, base: Optional[datetime] = None) -> datetime:
@@ -532,18 +607,31 @@ def sync_orders_task(
     )
 
 
-@celery_app.task(name="ozon.sync_browser_warehouses")
-def sync_browser_warehouses_task(
+@celery_app.task(name="ozon.periodic_incremental_order_sync")
+def periodic_incremental_order_sync_task(
+    days: int = AUTO_ORDER_SYNC_LOOKBACK_DAYS,
+    overlap_minutes: int = AUTO_ORDER_SYNC_OVERLAP_MINUTES,
+) -> Dict[str, Any]:
+    logger.info(
+        "Starting periodic_incremental_order_sync_task days=%s overlap_minutes=%s",
+        days,
+        overlap_minutes,
+    )
+    return run_periodic_incremental_order_sync(days=days, overlap_minutes=overlap_minutes)
+
+
+@celery_app.task(name="ozon.sync_warehouses")
+def sync_warehouses_task(
     store_id: int,
     user_owner: Optional[str] = None,
     tenant_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     logger.info(
-        "Starting sync_browser_warehouses_task for store_id=%s user_owner=%s",
+        "Starting sync_warehouses_task for store_id=%s user_owner=%s",
         store_id,
         user_owner,
     )
-    return run_sync_browser_warehouses(
+    return run_sync_warehouses(
         store_id=store_id,
         user_owner=user_owner,
         tenant_id=tenant_id,
@@ -560,45 +648,14 @@ def sync_core_task(
     return run_sync_core(days=days, user_owner=user_owner, tenant_id=tenant_id)
 
 
-@celery_app.task(name="ozon.cloud_follow_submit")
-def cloud_follow_submit_task(
-    store_id: int,
-    reference: str,
-    include_variants: bool = False,
-    max_variants: int = 20,
-    price: Optional[Any] = None,
-    old_price: Optional[Any] = None,
-    follow_min_price: Optional[Any] = None,
-    model: Optional[str] = None,
-    use_browser_session: bool = True,
-    preferred_url_fragment: Optional[str] = None,
-    front_cookie: Optional[str] = None,
-    user_agent: Optional[str] = None,
+@celery_app.task(name="ozon.login_auto_sync")
+def login_auto_sync_task(
+    days: int = 30,
     user_owner: Optional[str] = None,
     tenant_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    logger.info(
-        "Starting cloud_follow_submit_task store_id=%s reference=%s user_owner=%s",
-        store_id,
-        reference,
-        user_owner,
-    )
-    return run_cloud_follow_submit(
-        store_id=store_id,
-        reference=reference,
-        include_variants=include_variants,
-        max_variants=max_variants,
-        price=price,
-        old_price=old_price,
-        follow_min_price=follow_min_price,
-        model=model,
-        use_browser_session=use_browser_session,
-        preferred_url_fragment=preferred_url_fragment,
-        front_cookie=front_cookie,
-        user_agent=user_agent,
-        user_owner=user_owner,
-        tenant_id=tenant_id,
-    )
+    logger.info("Starting login_auto_sync_task days=%s user_owner=%s", days, user_owner)
+    return run_login_auto_sync(days=days, user_owner=user_owner, tenant_id=tenant_id)
 
 
 @celery_app.task(name="ozon.upload_job")

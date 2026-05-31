@@ -3,11 +3,45 @@ import type { AuthUser } from '../api/auth'
 const AUTH_TOKEN_KEY = 'ozon_access_token'
 const AUTH_USERNAME_KEY = 'ozon_username'
 const AUTH_USER_KEY = 'ozon_auth_user'
+const STORE_CACHE_PREFIX = 'ozon_store_list_cache:'
+const STORE_DIRTY_PREFIX = 'ozon_store_list_dirty:'
+const PRODUCT_CACHE_PREFIX = 'ozon_product_list_cache:'
+const PRODUCT_FILTER_PREFIX = 'ozon_product_filter_cache:'
+const PRODUCT_DIRTY_PREFIX = 'ozon_product_cache_dirty:'
+const INVENTORY_CACHE_PREFIX = 'ozon_inventory_list_cache:'
+const INVENTORY_DIRTY_PREFIX = 'ozon_inventory_cache_dirty:'
+const MESSAGES_CACHE_PREFIX = 'ozon_messages_list_cache:'
+const MESSAGES_FETCH_AT_PREFIX = 'ozon_messages_last_fetch_at:'
+const ACTIVITIES_AUTO_REFRESH_AT_PREFIX = 'ozon_activities_auto_refresh_at:'
+const RESOURCE_CACHE_PREFIX = 'ozon_resource_cache:'
 export const AUTH_SESSION_EVENT = 'auth-session-changed'
 
 function emitAuthSessionChange(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AUTH_SESSION_EVENT))
+  }
+}
+
+function clearStoreCaches(): void {
+  if (typeof window === 'undefined') return
+  for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+    const key = localStorage.key(i)
+    if (
+      key &&
+      (key.startsWith(STORE_CACHE_PREFIX) ||
+        key.startsWith(STORE_DIRTY_PREFIX) ||
+        key.startsWith(PRODUCT_CACHE_PREFIX) ||
+        key.startsWith(PRODUCT_FILTER_PREFIX) ||
+        key.startsWith(PRODUCT_DIRTY_PREFIX) ||
+        key.startsWith(INVENTORY_CACHE_PREFIX) ||
+        key.startsWith(INVENTORY_DIRTY_PREFIX) ||
+        key.startsWith(MESSAGES_CACHE_PREFIX) ||
+        key.startsWith(MESSAGES_FETCH_AT_PREFIX) ||
+        key.startsWith(ACTIVITIES_AUTO_REFRESH_AT_PREFIX) ||
+        key.startsWith(RESOURCE_CACHE_PREFIX))
+    ) {
+      localStorage.removeItem(key)
+    }
   }
 }
 
@@ -49,6 +83,7 @@ export function isAdminAuthenticated(): boolean {
 }
 
 export function setAuthSession(token: string, user: AuthUser): void {
+  clearStoreCaches()
   localStorage.setItem(AUTH_TOKEN_KEY, token)
   localStorage.setItem(AUTH_USERNAME_KEY, user.username)
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user))
@@ -56,6 +91,7 @@ export function setAuthSession(token: string, user: AuthUser): void {
 }
 
 export function clearAuthSession(): void {
+  clearStoreCaches()
   localStorage.removeItem(AUTH_TOKEN_KEY)
   localStorage.removeItem(AUTH_USERNAME_KEY)
   localStorage.removeItem(AUTH_USER_KEY)

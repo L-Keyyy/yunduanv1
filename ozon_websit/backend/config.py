@@ -1,6 +1,7 @@
 import os
 from typing import List
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,33 +43,94 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     CELERY_BROKER_URL: str = REDIS_URL
     CELERY_RESULT_BACKEND: str = REDIS_URL
+    CELERY_WORKER_PREFETCH_MULTIPLIER: int = int(
+        os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "1")
+    )
+    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = int(
+        os.getenv("CELERY_WORKER_MAX_TASKS_PER_CHILD", "20")
+    )
+    CELERY_WORKER_MAX_MEMORY_PER_CHILD_KB: int = int(
+        os.getenv("CELERY_WORKER_MAX_MEMORY_PER_CHILD_KB", "524288")
+    )
     UPLOAD_MAX_ACTIVE_STORES_PER_TENANT: int = int(
-        os.getenv("UPLOAD_MAX_ACTIVE_STORES_PER_TENANT", "2")
+        os.getenv("UPLOAD_MAX_ACTIVE_STORES_PER_TENANT", "1")
+    )
+    UPLOAD_MAX_ACTIVE_STORES_PER_TENANT_HARD_CAP: int = int(
+        os.getenv("UPLOAD_MAX_ACTIVE_STORES_PER_TENANT_HARD_CAP", "1")
     )
     UPLOAD_MAX_GLOBAL_ACTIVE_STORES: int = int(
-        os.getenv("UPLOAD_MAX_GLOBAL_ACTIVE_STORES", "48")
+        os.getenv("UPLOAD_MAX_GLOBAL_ACTIVE_STORES", "2")
+    )
+    UPLOAD_MAX_GLOBAL_ACTIVE_STORES_HARD_CAP: int = int(
+        os.getenv("UPLOAD_MAX_GLOBAL_ACTIVE_STORES_HARD_CAP", "2")
+    )
+    UPLOAD_MAX_ITEMS_PER_JOB: int = int(os.getenv("UPLOAD_MAX_ITEMS_PER_JOB", "20"))
+    UPLOAD_MAX_ITEMS_PER_JOB_HARD_CAP: int = int(
+        os.getenv("UPLOAD_MAX_ITEMS_PER_JOB_HARD_CAP", "20")
     )
     UPLOAD_MAX_ATTEMPTS: int = int(os.getenv("UPLOAD_MAX_ATTEMPTS", "3"))
     UPLOAD_TIMEOUT_SECONDS: int = int(os.getenv("UPLOAD_TIMEOUT_SECONDS", "900"))
     UPLOAD_RESULT_POLL_INTERVAL_SECONDS: int = int(
-        os.getenv("UPLOAD_RESULT_POLL_INTERVAL_SECONDS", "90")
+        os.getenv("UPLOAD_RESULT_POLL_INTERVAL_SECONDS", "180")
     )
+    UPLOAD_RESULT_POLL_INTERVAL_MIN_SECONDS: int = int(
+        os.getenv("UPLOAD_RESULT_POLL_INTERVAL_MIN_SECONDS", "180")
+    )
+    UPLOAD_RESULT_POLL_LIMIT: int = int(os.getenv("UPLOAD_RESULT_POLL_LIMIT", "20"))
     MANUAL_ORDER_SYNC_LIMIT: int = int(os.getenv("MANUAL_ORDER_SYNC_LIMIT", "5"))
     MANUAL_ORDER_SYNC_WINDOW_SECONDS: int = int(
         os.getenv("MANUAL_ORDER_SYNC_WINDOW_SECONDS", "1800")
     )
+    MANUAL_SYNC_LIMIT: int = int(
+        os.getenv("MANUAL_SYNC_LIMIT", os.getenv("MANUAL_ORDER_SYNC_LIMIT", "5"))
+    )
+    MANUAL_SYNC_WINDOW_SECONDS: int = int(
+        os.getenv(
+            "MANUAL_SYNC_WINDOW_SECONDS",
+            os.getenv("MANUAL_ORDER_SYNC_WINDOW_SECONDS", "1800"),
+        )
+    )
     ORDER_SYNC_INTERVAL_MINUTES: int = int(
-        os.getenv("ORDER_SYNC_INTERVAL_MINUTES", "120")
+        os.getenv("ORDER_SYNC_INTERVAL_MINUTES", "30")
     )
     SELLER_ANALYTICS_CACHE_TTL_SECONDS: int = int(
         os.getenv("SELLER_ANALYTICS_CACHE_TTL_SECONDS", str(3 * 24 * 60 * 60))
     )
+
+    @model_validator(mode="after")
+    def apply_resource_safety_caps(self) -> "Settings":
+        self.UPLOAD_MAX_ACTIVE_STORES_PER_TENANT = min(
+            max(1, int(self.UPLOAD_MAX_ACTIVE_STORES_PER_TENANT)),
+            max(1, int(self.UPLOAD_MAX_ACTIVE_STORES_PER_TENANT_HARD_CAP)),
+        )
+        self.UPLOAD_MAX_GLOBAL_ACTIVE_STORES = min(
+            max(1, int(self.UPLOAD_MAX_GLOBAL_ACTIVE_STORES)),
+            max(1, int(self.UPLOAD_MAX_GLOBAL_ACTIVE_STORES_HARD_CAP)),
+        )
+        self.UPLOAD_MAX_ITEMS_PER_JOB = min(
+            max(1, int(self.UPLOAD_MAX_ITEMS_PER_JOB)),
+            max(1, int(self.UPLOAD_MAX_ITEMS_PER_JOB_HARD_CAP)),
+        )
+        self.UPLOAD_RESULT_POLL_INTERVAL_SECONDS = max(
+            1,
+            int(self.UPLOAD_RESULT_POLL_INTERVAL_SECONDS),
+            int(self.UPLOAD_RESULT_POLL_INTERVAL_MIN_SECONDS),
+        )
+        self.UPLOAD_RESULT_POLL_LIMIT = max(1, int(self.UPLOAD_RESULT_POLL_LIMIT))
+        self.MANUAL_ORDER_SYNC_LIMIT = max(1, int(self.MANUAL_ORDER_SYNC_LIMIT))
+        self.MANUAL_ORDER_SYNC_WINDOW_SECONDS = max(
+            1, int(self.MANUAL_ORDER_SYNC_WINDOW_SECONDS)
+        )
+        self.MANUAL_SYNC_LIMIT = max(1, int(self.MANUAL_SYNC_LIMIT))
+        self.MANUAL_SYNC_WINDOW_SECONDS = max(1, int(self.MANUAL_SYNC_WINDOW_SECONDS))
+        return self
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-super-secret-key-here")
     FIELD_ENCRYPTION_KEY: str = os.getenv("FIELD_ENCRYPTION_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
+    ENABLE_BROWSER_ASSIST_HEALTH: bool = _env_bool("ENABLE_BROWSER_ASSIST_HEALTH", True)
     CHROME_DEVTOOLS_BASE: str = os.getenv(
         "CHROME_DEVTOOLS_BASE", "http://127.0.0.1:9222"
     )

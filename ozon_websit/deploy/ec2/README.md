@@ -61,11 +61,32 @@ Optional flags:
 ### Runtime checks
 
 ```bash
-sudo systemctl status ozon-backend ozon-worker ozon-beat ozon-chrome nginx
+sudo systemctl status ozon-backend ozon-worker ozon-upload-worker ozon-beat nginx
 curl -sS http://127.0.0.1:8000/healthz
 curl -sS http://127.0.0.1:8000/api/v1/health
+swapon --show
+```
+
+`ozon-browser-worker` and `ozon-chrome` are installed but disabled by default.
+Enable them only for workflows that explicitly require cloud-side browser
+assistance:
+
+```bash
+sudo systemctl enable --now ozon-chrome ozon-browser-worker
 curl -sS http://127.0.0.1:9222/json/version
 ```
+
+### Low-cost upload defaults
+
+The EC2 profile is tuned for `t3.small` plus managed PostgreSQL/RDS and
+Redis/ElastiCache:
+
+- upload worker concurrency is `1`
+- global active upload stores are capped at `2`
+- each upload job is capped at `20` items
+- upload result polling runs every `180` seconds with a limit of `20`
+- bootstrap creates a `2G` swap file when no swap is present
+- `ozon-browser-worker` and `ozon-chrome` stay disabled after deploy
 
 ### One-time SQLite migration
 

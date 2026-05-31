@@ -24,6 +24,23 @@ fi
 
 sudo dnf install -y nginx python3.12 python3.12-pip tar gzip unzip xorg-x11-server-Xvfb xorg-x11-xauth >/dev/null
 
+ensure_swap() {
+  if swapon --show --noheadings | grep -q .; then
+    return
+  fi
+  if [[ ! -f /swapfile ]]; then
+    sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  fi
+  sudo chmod 600 /swapfile
+  sudo mkswap -f /swapfile >/dev/null
+  sudo swapon /swapfile
+  if ! grep -qE '^[^#]+[[:space:]]+none[[:space:]]+swap[[:space:]]+' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+  fi
+}
+
+ensure_swap
+
 for pkg in \
   alsa-lib \
   atk \
@@ -130,13 +147,12 @@ sudo rm -rf /usr/share/nginx/html/*
 sudo cp -r "${FRONTEND_ROOT}/." /usr/share/nginx/html/
 
 sudo systemctl daemon-reload
-sudo systemctl enable nginx ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat ozon-chrome >/dev/null
+sudo systemctl enable nginx ozon-backend ozon-worker ozon-upload-worker ozon-beat >/dev/null
+sudo systemctl disable --now ozon-browser-worker ozon-chrome >/dev/null 2>&1 || true
 sudo systemctl restart ozon-backend
 sudo systemctl restart ozon-worker
 sudo systemctl restart ozon-upload-worker
-sudo systemctl restart ozon-browser-worker
 sudo systemctl restart ozon-beat
-sudo systemctl restart ozon-chrome
 sudo systemctl restart nginx
 
 echo "bootstrap complete"

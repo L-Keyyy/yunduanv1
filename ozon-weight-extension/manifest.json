@@ -11,12 +11,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "http://www.luokeyu.xyz/*",
-    "https://www.luokeyu.xyz/*",
-    "http://15.134.99.199/*",
-    "https://15.134.99.199/*",
-    "http://52.63.119.7/*",
-    "https://52.63.119.7/*",
+    "http://35.209.87.105/*",
     "http://127.0.0.1:3000/*",
     "http://localhost:3000/*",
     "http://127.0.0.1:3001/*",

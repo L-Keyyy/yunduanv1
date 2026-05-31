@@ -371,7 +371,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Back, RefreshRight } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
@@ -385,6 +385,10 @@ import {
   type MarketCategoryTrendRow,
   type MarketCategoryTrendResponse,
 } from '../api/analytics'
+
+defineOptions({
+  name: 'DataAnalysis',
+})
 
 const MARKET_ROOT_STORAGE_KEY = 'data-analysis-market-root-category-id'
 const MARKET_ROOT_ALL_VALUE = '__ALL__'
@@ -1362,7 +1366,17 @@ onMounted(() => {
   applyMarketAllSelection()
   persistMarketRootSelection(MARKET_ROOT_ALL_VALUE)
   loadData()
+})
+
+onActivated(() => {
   window.addEventListener('resize', handleResize)
+  void nextTick(() => {
+    handleResize()
+  })
+})
+
+onDeactivated(() => {
+  window.removeEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {

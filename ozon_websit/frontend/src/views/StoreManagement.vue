@@ -173,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { Search, RefreshRight, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { submitVerifyStoresJob } from '../api/jobs'
@@ -201,6 +201,7 @@ const storeFormRef = ref()
 const currentStoreId = ref<number | null>(null)
 const verifyingStoreId = ref<number | null>(null)
 const verifyJob = useAsyncJob()
+let hasCompletedInitialLoad = false
 
 const newStore = ref({
   store_name: '',
@@ -252,25 +253,29 @@ const resetNewStore = () => {
   }
 }
 
-const loadData = async () => {
-  loading.value = true
+const loadData = async (refresh = false, options: { background?: boolean } = {}) => {
+  const showLoading = !options.background && (refresh || tableData.value.length === 0)
+  if (showLoading) {
+    loading.value = true
+  }
   try {
-    tableData.value = await fetchStores()
+    tableData.value = await fetchStores(refresh)
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '获取店铺失败')
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
 const handleSearch = () => {
-  void loadData()
+  void loadData(true)
 }
 
 const handleReset = () => {
   searchQuery.value.keyword = ''
   searchQuery.value.storeGroup = ''
-  void loadData()
 }
 
 const submitAddStore = async () => {
@@ -388,8 +393,18 @@ const handleVerify = async (row: any) => {
   }
 }
 
-onMounted(() => {
-  void loadData()
+onMounted(async () => {
+  await loadData()
+  hasCompletedInitialLoad = true
+})
+
+onActivated(() => {
+  if (!hasCompletedInitialLoad) {
+    return
+  }
+  if (!tableData.value.length) {
+    void loadData()
+  }
 })
 </script>
 

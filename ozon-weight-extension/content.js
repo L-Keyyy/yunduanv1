@@ -5536,6 +5536,384 @@ async function fetchSellerAnalyticsItemFromSellerPage(productId, context) {
   return JSON.parse(text);
 }
 
+async function collectSellerHotTagsFromSellerPage(options = {}) {
+  if (!isSellerPage()) {
+    throw new Error("collect-hot-tags is only supported on seller.ozon.ru pages.");
+  }
+
+  const maxRows = Math.max(1, Math.min(10000, Number(options.maxRows || 5000)));
+  const groupSampleLimit = Math.max(0, Math.min(200, Number(options.groupSampleLimit || 50)));
+  const batchSize = Math.max(1, Math.min(10, Number(options.batchSize || 5)));
+  const requestLimit = 50;
+  const companyId = Number((document.cookie.match(/(?:^|; )sc_company_id=(\d+)/) || [])[1] || 0);
+
+  if (!companyId) {
+    throw new Error("Seller company cookie is missing. Open seller.ozon.ru and log in first.");
+  }
+
+  const headers = {
+    "content-type": "application/json",
+    "x-o3-app-name": "seller-ui",
+    "x-o3-company-id": String(companyId),
+    "x-o3-language": document.documentElement.lang || "zh-Hans",
+    "x-o3-page-type": "analytics_seller"
+  };
+
+  async function requestJson(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify(body)
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_error) {
+      data = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Seller request failed ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    return data;
+  }
+
+  function parsePercentText(value) {
+    const raw = String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\u2212/g, "-")
+      .trim();
+    if (!raw || /^[-\u2013\u2014]+$/.test(raw)) {
+      return null;
+    }
+    if (raw === "=") {
+      return 0;
+    }
+
+    const numericText = raw
+      .replace(/[+%\s]/g, "")
+      .replace(",", ".")
+      .replace(/[^\d.-]/g, "");
+    if (!numericText || numericText === "-" || numericText === ".") {
+      return null;
+    }
+
+    const numericValue = Number(numericText);
+    return Number.isFinite(numericValue) ? numericValue : null;
+  }
+
+  function getVisiblePageRows() {
+    return Array.from(document.querySelectorAll("table tbody tr"))
+      .map((row) => {
+        const cells = Array.from(row.cells || []).map((cell) =>
+          normalizeText(cell.innerText || cell.textContent || "")
+        );
+        return {
+          query: cells[0] || "",
+          trend28d: parsePercentText(cells[2]),
+          trend7d: parsePercentText(cells[3])
+        };
+      })
+      .filter((row) => row.query);
+  }
+
+  function pageSignature(rows = getVisiblePageRows()) {
+    return rows
+      .slice(0, 8)
+      .map((row) => `${row.query}|${row.trend28d ?? ""}|${row.trend7d ?? ""}`)
+      .join(";");
+  }
+
+  function visibleButtons() {
+    return Array.from(document.querySelectorAll("button")).filter((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }
+
+  function getPaginationButtons() {
+    const classMatched = visibleButtons().filter((button) => String(button.className || "").includes("t0c80-a1"));
+    if (classMatched.length) {
+      return classMatched;
+    }
+    return visibleButtons().filter((button) => {
+      const text = normalizeText(button.innerText || button.textContent || "");
+      return !text || /^\d+$/.test(text);
+    });
+  }
+
+  function getPageButton(label) {
+    return visibleButtons().find((button) => normalizeText(button.innerText || button.textContent || "") === label);
+  }
+
+  function getPreviousPageButton() {
+    const arrowButtons = getPaginationButtons().filter((button) => {
+      const text = normalizeText(button.innerText || button.textContent || "");
+      return !text;
+    });
+    return arrowButtons[0] || null;
+  }
+
+  function getNextPageButton() {
+    const arrowButtons = getPaginationButtons().filter((button) => {
+      const text = normalizeText(button.innerText || button.textContent || "");
+      return !text;
+    });
+    return arrowButtons[arrowButtons.length - 1] || null;
+  }
+
+  async function waitForPageSignatureChange(previousSignature) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20000) {
+      await sleep(200);
+      const rows = getVisiblePageRows();
+      const signature = pageSignature(rows);
+      if (rows.length && signature && signature !== previousSignature) {
+        return { changed: true, rows, signature };
+      }
+    }
+    const rows = getVisiblePageRows();
+    return { changed: false, rows, signature: pageSignature(rows) };
+  }
+
+  async function goToFirstVisiblePage() {
+    const firstPageButton = getPageButton("1");
+    if (firstPageButton && !firstPageButton.disabled && firstPageButton.getAttribute("aria-current") !== "page") {
+      const before = pageSignature();
+      firstPageButton.click();
+      await waitForPageSignatureChange(before);
+      return;
+    }
+
+    for (let guard = 0; guard < 50; guard += 1) {
+      const previousPageButton = getPreviousPageButton();
+      if (!previousPageButton || previousPageButton.disabled) {
+        return;
+      }
+      const before = pageSignature();
+      previousPageButton.click();
+      const result = await waitForPageSignatureChange(before);
+      if (!result.changed) {
+        return;
+      }
+    }
+  }
+
+  async function collectVisibleDynamics(requestedMaxRows) {
+    const byQuery = Object.create(null);
+    await goToFirstVisiblePage();
+
+    let previousSignature = "";
+    for (let pagesVisited = 0; pagesVisited < 250; pagesVisited += 1) {
+      const rows = getVisiblePageRows();
+      const signature = pageSignature(rows);
+      if (!rows.length || signature === previousSignature) {
+        break;
+      }
+      previousSignature = signature;
+
+      for (const row of rows) {
+        const key = row.query.trim().toLocaleLowerCase();
+        if (!key) {
+          continue;
+        }
+        byQuery[key] = {
+          trend28d: row.trend28d,
+          trend7d: row.trend7d
+        };
+      }
+
+      if (Object.keys(byQuery).length >= requestedMaxRows) {
+        break;
+      }
+
+      const nextPageButton = getNextPageButton();
+      if (!nextPageButton || nextPageButton.disabled) {
+        break;
+      }
+      nextPageButton.click();
+      const result = await waitForPageSignatureChange(signature);
+      if (!result.changed) {
+        break;
+      }
+    }
+
+    const availableCount = Object.values(byQuery).filter(
+      (row) => row && (row.trend7d !== null || row.trend28d !== null)
+    ).length;
+    return {
+      byQuery,
+      availableCount,
+      collectedCount: Object.keys(byQuery).length
+    };
+  }
+
+  function normalizeSearchRow(row) {
+    return {
+      query: String(row?.query || "").trim(),
+      count: Number(row?.count || 0),
+      dynamicsIn28: null,
+      dynamicsIn7: null,
+      addToCart: Number(row?.uniqQueriesWCa ?? row?.addToCart ?? 0),
+      addToCartRate: Number(row?.ca ?? row?.addToCartRate ?? 0),
+      orders: Number(row?.ord ?? row?.orders ?? 0),
+      orderRate: Number(row?.searchUsersToOrdUsers ?? row?.orderRate ?? 0),
+      noActionCount: Number(row?.usersWithoutInterectionCount ?? row?.noActionCount ?? 0),
+      noActionShare: Number(row?.usersWithoutInterectionShare ?? row?.noActionShare ?? 0),
+      sellers: Number(row?.uniqSellers ?? row?.sellers ?? 0)
+    };
+  }
+
+  async function fetchSearchCollection(params, requestedMaxRows) {
+    const safeMaxRows = Math.max(0, Number(requestedMaxRows || 0));
+    if (!safeMaxRows) {
+      return { total: 0, rows: [] };
+    }
+
+    const baseBody = {
+      text: params.text || "",
+      limit: String(requestLimit),
+      offset: "0",
+      sort_by: "count",
+      sort_dir: "desc",
+      period: params.period || "days_7"
+    };
+    if (params.groupName) {
+      baseBody.group_name = params.groupName;
+    }
+
+    const firstPage = await requestJson("/api/site/searchteam/Stats/queries/search/v2", baseBody);
+    const total = Math.max(0, Number(firstPage?.total || 0));
+    const cappedTotal = Math.min(total, safeMaxRows);
+    let rows = Array.isArray(firstPage?.data)
+      ? firstPage.data.map(normalizeSearchRow).filter((row) => row.query).slice(0, cappedTotal)
+      : [];
+
+    const offsets = [];
+    for (let offset = requestLimit; offset < cappedTotal; offset += requestLimit) {
+      offsets.push(offset);
+    }
+
+    for (let index = 0; index < offsets.length; index += batchSize) {
+      const batchOffsets = offsets.slice(index, index + batchSize);
+      const batchResults = await Promise.all(
+        batchOffsets.map((offset) =>
+          requestJson("/api/site/searchteam/Stats/queries/search/v2", {
+            ...baseBody,
+            offset: String(offset)
+          })
+        )
+      );
+
+      for (const batchResult of batchResults) {
+        const batchRows = Array.isArray(batchResult?.data)
+          ? batchResult.data.map(normalizeSearchRow).filter((row) => row.query)
+          : [];
+        rows = rows.concat(batchRows);
+        if (rows.length >= cappedTotal) {
+          break;
+        }
+      }
+
+      if (rows.length >= cappedTotal) {
+        break;
+      }
+    }
+
+    return {
+      total,
+      rows: rows.slice(0, cappedTotal)
+    };
+  }
+
+  function normalizeGroupNames(payload) {
+    const source = Array.isArray(payload?.groups)
+      ? payload.groups
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : [];
+    return source
+      .map((row) => {
+        if (typeof row === "string") {
+          return normalizeText(row);
+        }
+        return normalizeText(row?.name || row?.groupName || row?.title || "");
+      })
+      .filter(Boolean);
+  }
+
+  const groupResponse = await requestJson("/api/site/searchstat/Stats/queries/groups", {});
+  const groupNames = normalizeGroupNames(groupResponse);
+  const mainRowsResponse = await fetchSearchCollection({ period: "days_7" }, maxRows);
+  const visibleDynamics = await collectVisibleDynamics(maxRows);
+  const mainRows = mainRowsResponse.rows.map((row) => {
+    const dynamicRow = visibleDynamics.byQuery[row.query.trim().toLocaleLowerCase()] || null;
+    return {
+      ...row,
+      dynamicsIn28: dynamicRow ? dynamicRow.trend28d : null,
+      dynamicsIn7: dynamicRow ? dynamicRow.trend7d : null
+    };
+  });
+
+  const queryGroups = Object.create(null);
+  for (let index = 0; index < groupNames.length; index += batchSize) {
+    const batchGroupNames = groupNames.slice(index, index + batchSize);
+    const batchResponses = await Promise.all(
+      batchGroupNames.map((groupName) =>
+        fetchSearchCollection({ period: "days_7", groupName }, groupSampleLimit).catch(() => ({
+          total: 0,
+          rows: []
+        }))
+      )
+    );
+
+    batchResponses.forEach((response, responseIndex) => {
+      const groupName = batchGroupNames[responseIndex];
+      for (const row of response.rows || []) {
+        const key = row.query.trim().toLocaleLowerCase();
+        if (!key) {
+          continue;
+        }
+        if (!queryGroups[key]) {
+          queryGroups[key] = {
+            query: row.query,
+            bestGroup: groupName,
+            bestCount: row.count,
+            groups: [groupName]
+          };
+          continue;
+        }
+        if (!queryGroups[key].groups.includes(groupName)) {
+          queryGroups[key].groups.push(groupName);
+        }
+        if (row.count > queryGroups[key].bestCount) {
+          queryGroups[key].bestGroup = groupName;
+          queryGroups[key].bestCount = row.count;
+        }
+      }
+    });
+  }
+
+  return {
+    ok: true,
+    sellerUrl: location.href,
+    companyId,
+    overallTotal: mainRowsResponse.total,
+    fetchedTotal: mainRows.length,
+    rows: mainRows,
+    visibleDynamicsAvailableCount: Number(visibleDynamics.availableCount || 0),
+    queryGroups: Object.values(queryGroups).map((row) => ({
+      query: row.query,
+      group: row.groups.length === 1 ? row.bestGroup : ""
+    })),
+    groups: groupNames,
+    generatedAt: new Date().toISOString()
+  };
+}
+
 function scheduleBuyerAnalyticsRefresh() {
   clearTimeout(buyerAnalyticsRefreshTimer);
   buyerAnalyticsRefreshTimer = setTimeout(() => {
@@ -6155,6 +6533,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     fetchSellerAnalyticsItemFromSellerPage(message.productId, message.context)
       .then((payload) => sendResponse({ ok: true, payload }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.type === "collect-hot-tags") {
+    collectSellerHotTagsFromSellerPage(message.options || {})
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
 
     return true;
   }

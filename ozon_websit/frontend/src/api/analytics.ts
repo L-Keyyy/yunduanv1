@@ -1,7 +1,72 @@
 import apiClient from './client'
+import { getAuthUser } from '../utils/auth'
 
 const HOT_TAGS_FRONTEND_CACHE_TTL_MS = 5 * 60 * 1000
 const hotTagsResponseCache = new Map<string, { expiresAt: number; data: any }>()
+const COMMISSIONS_CACHE_PREFIX = 'ozon_commissions_cache:v1:'
+const COMMISSIONS_FRONTEND_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const commissionsResponseCache = new Map<string, { expiresAt: number; data: any }>()
+
+const resolveAnalyticsOwnerKey = () => {
+  const username = (getAuthUser()?.username || 'anonymous').trim().toLowerCase()
+  return username || 'anonymous'
+}
+
+const resolveCommissionsCacheKey = () => `${COMMISSIONS_CACHE_PREFIX}${resolveAnalyticsOwnerKey()}`
+
+const readCommissionsCache = (cacheKey: string) => {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(cacheKey)
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') {
+      return null
+    }
+    const expiresAt = Number(parsed.expiresAt || 0)
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      localStorage.removeItem(cacheKey)
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeCommissionsCache = (cacheKey: string, payload: { expiresAt: number; data: any }) => {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(payload))
+  } catch {
+    // ignore storage quota failures
+  }
+}
+
+const filterCommissionsRows = (rows: any[], search: string) => {
+  const query = String(search || '').trim().toLowerCase()
+  if (!query) {
+    return rows
+  }
+
+  return rows.filter((row) => {
+    const group = String(row?.group || '').toLowerCase()
+    const category = String(row?.category || '').toLowerCase()
+    const sourceHeading = String(row?.sourceHeading || '').toLowerCase()
+    return group.includes(query) || category.includes(query) || sourceHeading.includes(query)
+  })
+}
+
+const buildFilteredCommissionsPayload = (payload: any, search: string) => {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  const result = Array.isArray(source.result) ? source.result : []
+  return {
+    ...source,
+    result: filterCommissionsRows(result, search),
+  }
+}
 
 export interface AnalyticsChartItem {
   name: string
@@ -317,15 +382,37 @@ export const fetchMarketCategoryTrends = async (
 }
 
 export const fetchCommissions = async (search = '') => {
+  const normalizedSearch = String(search || '').trim()
+  const cacheKey = resolveCommissionsCacheKey()
+  const now = Date.now()
+
+  const memoryCached = commissionsResponseCache.get(cacheKey)
+  if (memoryCached && memoryCached.expiresAt > now) {
+    return buildFilteredCommissionsPayload(memoryCached.data, normalizedSearch)
+  }
+
+  const storageCached = readCommissionsCache(cacheKey)
+  if (storageCached && storageCached.expiresAt > now) {
+    commissionsResponseCache.set(cacheKey, storageCached)
+    return buildFilteredCommissionsPayload(storageCached.data, normalizedSearch)
+  }
+
   const response = await apiClient.get('/commissions', {
-    params: { search },
+    params: { search: '' },
   })
-  return response.data
+  const payload = response.data
+  const cachePayload = {
+    expiresAt: now + COMMISSIONS_FRONTEND_CACHE_TTL_MS,
+    data: payload,
+  }
+  commissionsResponseCache.set(cacheKey, cachePayload)
+  writeCommissionsCache(cacheKey, cachePayload)
+  return buildFilteredCommissionsPayload(payload, normalizedSearch)
 }
 
 export const fetchHotTags = async (search = '', trendDays = 7) => {
   const normalizedTrendDays = Number(trendDays) === 28 ? 28 : 7
-  const cacheKey = `${String(search || '').trim()}::${normalizedTrendDays}`
+  const cacheKey = `${resolveAnalyticsOwnerKey()}::${String(search || '').trim()}::${normalizedTrendDays}`
   const cachedEntry = hotTagsResponseCache.get(cacheKey)
   if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
     return cachedEntry.data

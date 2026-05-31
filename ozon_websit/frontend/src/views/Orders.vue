@@ -75,17 +75,27 @@
           </template>
         </el-table-column>
         <el-table-column prop="amount_label" label="金额" width="120" />
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="row.status === 'awaiting_packaging'"
-              size="small"
-              type="primary"
-              @click="handlePackaged(row)"
-            >
-              备货完成
-            </el-button>
-            <el-button v-else size="small">查看</el-button>
+            <div class="order-actions">
+              <el-button
+                v-if="row.status === 'awaiting_packaging'"
+                size="small"
+                type="primary"
+                @click="handlePackaged(row)"
+              >
+                备货完成
+              </el-button>
+              <el-button
+                size="small"
+                :type="row.downloaded || row.printed ? 'info' : 'success'"
+                :icon="Download"
+                @click="handlePrintWaybill(row)"
+              >
+                {{ row.downloaded || row.printed ? '重新下载 PDF' : '下载面单 PDF' }}
+              </el-button>
+              <el-button v-if="row.status !== 'awaiting_packaging'" size="small">查看</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -106,15 +116,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { submitSyncOrdersJob } from '../api/jobs'
-import { fetchOrders, markOrderPackaged } from '../api/orders'
+import { downloadOrderWaybillPdf, fetchOrders, markOrderPackaged } from '../api/orders'
 import { fetchStores } from '../api/store'
+import { getAuthUser } from '../utils/auth'
 import { useAsyncJob } from '../composables/useAsyncJob'
 
 const route = useRoute()
+const ORDER_AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000
+const ORDER_AUTO_SYNC_AT_PREFIX = 'ozon_orders_auto_sync_at:v1:'
 const status = ref('all')
 const loading = ref(false)
 const syncJob = useAsyncJob()
@@ -137,6 +151,50 @@ const searchQuery = ref({
   keyword: '',
   storeId: undefined as number | undefined,
 })
+let hasCompletedInitialLoad = false
+
+const resolveOrderAutoSyncKey = () => {
+  const username = (getAuthUser()?.username || 'anonymous').trim().toLowerCase()
+  return `${ORDER_AUTO_SYNC_AT_PREFIX}${username || 'anonymous'}`
+}
+
+const readLastOrderAutoSyncAt = () => {
+  if (typeof window === 'undefined') return 0
+  try {
+    const raw = localStorage.getItem(resolveOrderAutoSyncKey())
+    const numeric = Number(raw || 0)
+    return Number.isFinite(numeric) ? numeric : 0
+  } catch {
+    return 0
+  }
+}
+
+const writeLastOrderAutoSyncAt = (timestamp: number) => {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(resolveOrderAutoSyncKey(), String(timestamp))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+const shouldAutoSyncOrdersNow = () => Date.now() - readLastOrderAutoSyncAt() >= ORDER_AUTO_SYNC_INTERVAL_MS
+
+const triggerAutoSyncOnTabOpen = async () => {
+  if (!shouldAutoSyncOrdersNow()) {
+    return false
+  }
+  try {
+    await submitSyncOrdersJob({
+      days: syncDays.value,
+    })
+    writeLastOrderAutoSyncAt(Date.now())
+    return true
+  } catch (error) {
+    console.warn('Auto order sync submit failed', error)
+    return false
+  }
+}
 
 const statusType = (value: string) => {
   if (value === 'awaiting_packaging') return 'danger'
@@ -151,8 +209,48 @@ const isUrgent = (deadlineAt: string) => {
   return deadline - Date.now() < 12 * 60 * 60 * 1000
 }
 
-const handleSearch = async () => {
-  loading.value = true
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+const getFilenameFromDisposition = (value?: string): string => {
+  const fallback = `ozon-waybill-${Date.now()}.pdf`
+  if (!value) return fallback
+  const utfMatch = value.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1])
+  const plainMatch = value.match(/filename="?([^";]+)"?/i)
+  return plainMatch?.[1] || fallback
+}
+
+const getBlobErrorMessage = async (error: any, fallback: string) => {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    const text = await data.text().catch(() => '')
+    if (text) {
+      try {
+        const parsed = JSON.parse(text)
+        if (parsed?.detail) return String(parsed.detail)
+      } catch (_error) {
+        return text
+      }
+    }
+  }
+  return error?.response?.data?.detail || fallback
+}
+
+const handleSearch = async (forceRefresh = false, options: { background?: boolean } = {}) => {
+  const shouldForceRefresh = forceRefresh === true
+  const showLoading = !options.background && (shouldForceRefresh || tableData.value.length === 0)
+  if (showLoading) {
+    loading.value = true
+  }
   try {
     const data = await fetchOrders({
       scheme: 'FBS',
@@ -161,6 +259,8 @@ const handleSearch = async () => {
       store_id: searchQuery.value.storeId,
       page: currentPage.value,
       page_size: pageSize.value,
+    }, {
+      forceRefresh: shouldForceRefresh,
     })
     tableData.value = data.result || []
     total.value = data.total || 0
@@ -169,14 +269,34 @@ const handleSearch = async () => {
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '获取订单失败')
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
 const handlePackaged = async (row: any) => {
   await markOrderPackaged(row.id)
   ElMessage.success('订单已转为待发货')
-  void handleSearch()
+  void handleSearch(true)
+}
+
+const handlePrintWaybill = async (row: any) => {
+  if (!row.posting_number) {
+    ElMessage.warning('当前订单缺少 Ozon 订单号，无法下载面单')
+    return
+  }
+
+  try {
+    const response = await downloadOrderWaybillPdf(row.id)
+    const filename = getFilenameFromDisposition(response.headers['content-disposition'])
+    downloadBlob(response.data, filename)
+    row.printed = true
+    row.downloaded = true
+    ElMessage.success('PDF 面单已下载')
+  } catch (error: any) {
+    ElMessage.error(await getBlobErrorMessage(error, 'PDF 面单下载失败'))
+  }
 }
 
 const handleSync = async () => {
@@ -189,7 +309,8 @@ const handleSync = async () => {
     {
       successMessage: '订单同步完成',
       onSuccess: async () => {
-        await handleSearch()
+        writeLastOrderAutoSyncAt(Date.now())
+        await handleSearch(true)
       },
     }
   )
@@ -214,6 +335,31 @@ watch(() => route.query.highlight, () => scrollToHighlight())
 onMounted(async () => {
   stores.value = await fetchStores()
   await handleSearch()
+  const submitted = await triggerAutoSyncOnTabOpen()
+  if (submitted) {
+    void handleSearch(true, { background: true })
+  }
+  hasCompletedInitialLoad = true
+})
+
+onActivated(async () => {
+  if (!hasCompletedInitialLoad) {
+    return
+  }
+  if (!tableData.value.length) {
+    stores.value = await fetchStores()
+    await handleSearch()
+    const submitted = await triggerAutoSyncOnTabOpen()
+    if (submitted) {
+      void handleSearch(true, { background: true })
+    }
+    return
+  }
+
+  const submitted = await triggerAutoSyncOnTabOpen()
+  if (submitted) {
+    void handleSearch(true, { background: true })
+  }
 })
 </script>
 
@@ -249,6 +395,17 @@ onMounted(async () => {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+
+.order-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.order-actions .el-button {
+  margin-left: 0;
 }
 
 :deep(.highlight-target-row) {

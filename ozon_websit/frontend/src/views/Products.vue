@@ -36,7 +36,7 @@
             :value="option.value"
           />
         </el-select>
-        <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="handleSearch(true)">刷新</el-button>
         <el-button :icon="RefreshRight" @click="handleReset">重置</el-button>
         <el-button :icon="Refresh" @click="handleSync" :loading="syncing">从上传任务同步</el-button>
       </div>
@@ -164,7 +164,7 @@
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="tagType(row.status)">{{ row.status }}</el-tag>
+            <el-tag :type="getProductStatusTagType(row.status)">{{ getProductStatusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
@@ -220,7 +220,9 @@
             <div class="detail-tags">
               <el-tag>{{ detailRow.store_name || '-' }}</el-tag>
               <el-tag effect="plain">{{ detailRow.source || '-' }}</el-tag>
-              <el-tag :type="tagType(detailRow.status)">{{ detailRow.status }}</el-tag>
+              <el-tag :type="getProductStatusTagType(detailRow.status)">
+                {{ getProductStatusLabel(detailRow.status) }}
+              </el-tag>
             </div>
             <div class="detail-summary">
               <span>Offer ID: {{ detailRow.offer_id || '-' }}</span>
@@ -405,7 +407,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshRight, Search } from '@element-plus/icons-vue'
 import { submitSyncProductsJob } from '../api/jobs'
@@ -423,6 +425,7 @@ import { fetchStores } from '../api/store'
 import { fetchUploadJob, refreshUploadJob } from '../api/upload'
 import { useAsyncJob } from '../composables/useAsyncJob'
 import { getSellerProductSearchUrl } from '../utils/ozon'
+import { getProductStatusLabel, getProductStatusTagType } from '../utils/productStatus'
 
 const loading = ref(false)
 const syncJob = useAsyncJob()
@@ -444,6 +447,7 @@ const uploadJobDetail = ref<any | null>(null)
 const marketInsights = ref<any | null>(null)
 const marketInsightsError = ref('')
 const marketInsightsPeriod = ref<'weekly' | 'monthly'>('weekly')
+let hasCompletedInitialLoad = false
 const filterOptions = ref({
   categories: [] as Array<{ level_1?: string; level_2?: string; level_3?: string }>,
   sources: [] as string[],
@@ -574,13 +578,6 @@ const prettyJson = (value: any) => {
   }
 }
 
-const tagType = (status: string) => {
-  if (status === 'approved') return 'success'
-  if (status === 'rejected') return 'danger'
-  if (status === 'archived') return 'info'
-  return 'warning'
-}
-
 const loadStores = async () => {
   stores.value = await fetchStores()
 }
@@ -631,17 +628,23 @@ const syncOpenDetailRow = () => {
   }
 }
 
-const handleSearch = async () => {
-  loading.value = true
+const handleSearch = async (forceRefresh = false, options: { background?: boolean } = {}) => {
+  const shouldForceRefresh = forceRefresh === true
+  const showLoading = !options.background && (shouldForceRefresh || tableData.value.length === 0)
+  if (showLoading) {
+    loading.value = true
+  }
   try {
-    const data = await fetchProducts(buildParams())
+    const data = await fetchProducts(buildParams(), { forceRefresh: shouldForceRefresh })
     tableData.value = data.result || []
     total.value = data.total || 0
     syncOpenDetailRow()
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '查询商品失败')
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
@@ -916,6 +919,18 @@ onMounted(async () => {
   await loadStores()
   await loadProductFilters()
   await handleSearch()
+  hasCompletedInitialLoad = true
+})
+
+onActivated(async () => {
+  if (!hasCompletedInitialLoad) {
+    return
+  }
+  if (!tableData.value.length) {
+    await loadStores()
+    await loadProductFilters()
+    await handleSearch()
+  }
 })
 </script>
 

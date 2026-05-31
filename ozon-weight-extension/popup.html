@@ -87,6 +87,8 @@
     <button id="extractAllBtn" class="success">One-Click Extract All</button>
     <button id="weightBtn">Get Package Weight Only</button>
     <button id="clearBtn" class="secondary">Clear Current State</button>
+    <button id="dailyUploadBtn" class="success">One-Click Upload Daily Analytics</button>
+    <button id="hotTagsUploadBtn" class="success">Upload Hot Tags</button>
 
     <div class="card">
       <div class="label">Status</div>
@@ -98,6 +100,19 @@
       <div id="result" class="value">No result yet.</div>
     </div>
 
+    <div class="card">
+      <div class="label">Daily Analytics Upload</div>
+      <div id="dailyUploadStatus" class="value">Idle</div>
+      <div id="dailyUploadResult" class="value">No upload yet.</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Hot Tags Upload</div>
+      <div id="hotTagsUploadStatus" class="value">Idle</div>
+      <div id="hotTagsUploadResult" class="value">No upload yet.</div>
+    </div>
+
     <script src="popup.js"></script>
+    <script src="daily_upload_popup.js"></script>
   </body>
 </html>

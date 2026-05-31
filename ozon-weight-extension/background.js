@@ -1,34 +1,47 @@
+import {
+  DAILY_ANALYTICS_UPLOAD_STATE_KEY,
+  buildDailyAnalyticsUploadPayload
+} from "./daily_analytics_upload.js";
+import {
+  HOT_TAGS_UPLOAD_DEFAULTS,
+  HOT_TAGS_UPLOAD_STATE_KEY,
+  buildHotTagsUploadPayload
+} from "./hot_tags_upload.js";
+
 const JOB_PREFIX = "job:";
 const SELLER_ANALYTICS_PREFIX = "sellerAnalytics:";
 const SELLER_CONTEXT_KEY = "sellerAnalytics:context";
 const SELLER_ANALYTICS_ENDPOINT =
   "https://seller.ozon.ru/api/site/seller-analytics/what_to_sell/data/v3";
 const SELLER_BRIDGE_URL = "https://seller.ozon.ru/app/analytics/what-to-sell";
+const SELLER_HOT_TAGS_URL = "https://seller.ozon.ru/app/analytics/what-to-sell/all-queries";
+const OZON_BUYER_BRIDGE_URL = "https://www.ozon.ru/";
 const SELLER_ANALYTICS_CACHE_TTL_MS = 15 * 60 * 1000;
 const HD_API_ORIGINS = [
-  "http://www.luokeyu.xyz",
-  "https://www.luokeyu.xyz",
-  "https://15.134.99.199",
-  "http://15.134.99.199",
-  "http://52.63.119.7",
+  "http://35.209.87.105",
   "http://127.0.0.1:3000",
   "http://localhost:3000",
   "http://127.0.0.1:3001",
   "http://localhost:3001"
 ];
 const HD_DASHBOARD_URL_PATTERNS = HD_API_ORIGINS.map((origin) => `${origin}/*`);
-const HD_PRIMARY_APP_ORIGIN = "http://www.luokeyu.xyz";
+const HD_PRIMARY_APP_ORIGIN = "http://35.209.87.105";
 const HD_API_KEY_STORAGE_KEY = "hd:accessToken";
 const HD_AUTH_SESSION_STORAGE_KEY = "hd:authSession";
 const HD_LOGIN_PATH = "/login?redirect=%2Fstore-management";
 const HD_STATUS_REFRESH_MS = 1500;
 const CLOUD_FOLLOW_COLLECT_ALARM = "cloud-follow-collect";
 const CLOUD_FOLLOW_COLLECT_INTERVAL_MINUTES = 1;
+const CLOUD_FOLLOW_COLLECT_BATCH_LIMIT = 5;
+const CLOUD_FOLLOW_COLLECT_CONCURRENCY = 2;
+const CLOUD_FOLLOW_COLLECT_DRAIN_DELAY_MS = 1200;
 const CLOUD_FOLLOW_DEVICE_ID_KEY = "cloudFollow:deviceId";
+const OZON_ENTRYPOINT_FETCH_TIMEOUT_MS = 20000;
 
 const sellerAnalyticsInflight = new Map();
 let sellerContextInflight = null;
 let sellerBridgeTabPromise = null;
+let ozonBuyerBridgeTabPromise = null;
 let cloudFollowCollectInFlight = false;
 
 function nowIso() {
@@ -62,6 +75,10 @@ function isSellerTabUrl(url = "") {
 
 function isSellerLoginUrl(url = "") {
   return /:\/\/seller\.ozon\.ru\/app\/registration\/signin/i.test(url) || /[?&]auth=1(?:&|$)/i.test(url);
+}
+
+function isOzonBuyerTabUrl(url = "") {
+  return /:\/\/(?:www\.)?ozon\.ru\//i.test(url);
 }
 
 function matchesSupportedUrl(url = "") {
@@ -344,6 +361,51 @@ async function ensureSellerBridgeTab() {
   return sellerBridgeTabPromise;
 }
 
+async function ensureSellerHotTagsTab() {
+  const tabs = await chrome.tabs.query({});
+  const exactTab = tabs.find(
+    (tab) => tab.id && /:\/\/seller\.ozon\.ru\/app\/analytics\/what-to-sell\/all-queries/i.test(tab.url || "")
+  );
+  if (exactTab) {
+    return exactTab;
+  }
+
+  const reusableTab = tabs.find((tab) => tab.id && isSellerTabUrl(tab.url || "") && !isSellerLoginUrl(tab.url || ""));
+  if (reusableTab?.id) {
+    await chrome.tabs.update(reusableTab.id, { url: SELLER_HOT_TAGS_URL, active: false });
+    return waitForTabReady(reusableTab.id, 30000);
+  }
+
+  const bridgeTab = await chrome.tabs.create({ url: SELLER_HOT_TAGS_URL, active: false });
+  const readyTab = await waitForTabReady(bridgeTab.id, 30000);
+  if (isSellerLoginUrl(readyTab?.url || "")) {
+    throw new Error("Seller login required. Log in once so the extension can reuse local cookies.");
+  }
+  return readyTab;
+}
+
+async function ensureOzonBuyerBridgeTab(preferredUrl = OZON_BUYER_BRIDGE_URL) {
+  if (!ozonBuyerBridgeTabPromise) {
+    ozonBuyerBridgeTabPromise = (async () => {
+      const tabs = await chrome.tabs.query({});
+      const reusableTab = tabs.find((tab) => tab.id && isOzonBuyerTabUrl(tab.url || ""));
+      if (reusableTab) {
+        return reusableTab;
+      }
+
+      const bridgeTab = await chrome.tabs.create({
+        url: preferredUrl || OZON_BUYER_BRIDGE_URL,
+        active: false
+      });
+      return waitForTabReady(bridgeTab.id);
+    })().finally(() => {
+      ozonBuyerBridgeTabPromise = null;
+    });
+  }
+
+  return ozonBuyerBridgeTabPromise;
+}
+
 async function requestSellerContextFromTabs(options = {}) {
   const tabs = await chrome.tabs.query({});
   const sellerTabs = tabs.filter((tab) => tab.id && isSellerTabUrl(tab.url || ""));
@@ -613,6 +675,116 @@ async function getSellerAnalytics(productIds, options = {}) {
   }
 
   return result;
+}
+
+async function getDailyAnalyticsUploadSummary(maxRecords = 5000) {
+  const storageData = await chrome.storage.local.get(null);
+  const payload = buildDailyAnalyticsUploadPayload(storageData, { maxRecords });
+  return {
+    generatedAt: nowIso(),
+    stats: payload.stats || {},
+    context: payload.context || {},
+    lastUpload: storageData[DAILY_ANALYTICS_UPLOAD_STATE_KEY] || null
+  };
+}
+
+async function uploadDailyAnalyticsSnapshot({ storeId = null, maxRecords = 5000 } = {}) {
+  const storageData = await chrome.storage.local.get(null);
+  const payload = buildDailyAnalyticsUploadPayload(storageData, { storeId, maxRecords });
+  if (!Array.isArray(payload.records) || !payload.records.length) {
+    throw new Error(
+      "No local seller analytics data found. Keep seller.ozon.ru analytics open and collect data first."
+    );
+  }
+
+  const { origin, data } = await fetchHdJsonSafe("/api/v1/extension/analytics-daily-upload", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+  const uploadedState = {
+    ok: true,
+    at: nowIso(),
+    origin,
+    storeId: Number(data?.store_id) || payload.store_id || null,
+    uploadedAt: data?.uploaded_at || payload.uploaded_at,
+    receivedCount: Number(data?.received_count) || payload.records.length,
+    storedCount: Number(data?.stored_count) || 0,
+    totalRecords: Number(payload.stats?.totalRecords) || payload.records.length
+  };
+
+  await chrome.storage.local.set({
+    [DAILY_ANALYTICS_UPLOAD_STATE_KEY]: uploadedState
+  });
+
+  return {
+    state: uploadedState,
+    stats: payload.stats || {},
+    context: payload.context || {},
+    response: data || {}
+  };
+}
+
+async function collectHotTagsFromSeller(options = {}) {
+  const tab = await ensureSellerHotTagsTab();
+  const response = await sendMessageToTab(tab.id, {
+    type: "collect-hot-tags",
+    options: {
+      maxRows: options.maxRows || HOT_TAGS_UPLOAD_DEFAULTS.maxRows,
+      groupSampleLimit: options.groupSampleLimit || HOT_TAGS_UPLOAD_DEFAULTS.groupSampleLimit,
+      batchSize: options.batchSize || HOT_TAGS_UPLOAD_DEFAULTS.batchSize
+    }
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || "Hot tags collection failed.");
+  }
+  return response.payload || {};
+}
+
+async function getHotTagsUploadSummary() {
+  const storageData = await chrome.storage.local.get(HOT_TAGS_UPLOAD_STATE_KEY);
+  return {
+    generatedAt: nowIso(),
+    lastUpload: storageData[HOT_TAGS_UPLOAD_STATE_KEY] || null
+  };
+}
+
+async function uploadHotTagsSnapshot(options = {}) {
+  const collected = await collectHotTagsFromSeller(options);
+  const payload = buildHotTagsUploadPayload(collected);
+  if (!Array.isArray(payload.rows) || !payload.rows.length) {
+    throw new Error("No hot-tags rows were collected from seller.ozon.ru.");
+  }
+
+  const { origin, data } = await fetchHdJsonSafe("/api/v1/extension/hot-tags-upload", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+  const uploadedState = {
+    ok: true,
+    at: nowIso(),
+    origin,
+    uploadedAt: data?.uploaded_at || payload.generated_at,
+    receivedCount: Number(data?.received_count) || payload.rows.length,
+    storedCount: Number(data?.stored_count) || payload.rows.length,
+    companyId: data?.company_id || payload.company_id || null,
+    visibleDynamicsAvailableCount: Number(payload.visible_dynamics_available_count) || 0
+  };
+
+  await chrome.storage.local.set({
+    [HOT_TAGS_UPLOAD_STATE_KEY]: uploadedState
+  });
+
+  return {
+    state: uploadedState,
+    response: data || {},
+    collected: {
+      rows: payload.rows.length,
+      groups: Array.isArray(payload.groups) ? payload.groups.length : 0,
+      visibleDynamicsAvailableCount: payload.visible_dynamics_available_count
+    }
+  };
 }
 
 async function injectContentScriptIntoOpenTabs() {
@@ -1012,71 +1184,254 @@ async function getCloudFollowDeviceId() {
   return next;
 }
 
-function resolveCloudFollowCollectUrl(task) {
-  const sourceUrl = String(task?.source_url || "").trim();
-  if (/^https?:\/\//i.test(sourceUrl)) {
-    return sourceUrl;
+function resolveCloudFollowCollectProductId(task) {
+  const candidate = String(task?.resolved_product_id || task?.reference || "").match(/\d{6,}/)?.[0];
+  if (!candidate) {
+    return null;
   }
-  const productId = String(task?.resolved_product_id || task?.reference || "").match(/\d{6,}/)?.[0];
-  if (productId) {
-    return `https://www.ozon.ru/product/${productId}/`;
-  }
-  return null;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function waitForTabLoaded(tabId, timeoutMs = 45000) {
-  const current = await chrome.tabs.get(tabId).catch(() => null);
-  if (current?.status === "complete") {
+function buildCloudFollowEntrypointPaths(productId) {
+  const productPath = `/product/${productId}/`;
+  return [productPath, `${productPath}?layout_container=pdpPage2column&layout_page_index=2`];
+}
+
+function resolveCloudFollowCollectProductUrl(task, productId) {
+  const reference = String(task?.reference || "").trim();
+  const urlMatch = reference.match(/https?:\/\/(?:www\.)?ozon\.ru\/product\/\d{6,}[^\s]*/i);
+  if (urlMatch?.[0]) {
+    return urlMatch[0];
+  }
+  return `https://www.ozon.ru/product/${productId}/`;
+}
+
+function isCloudFollowEntrypointBlockedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("entrypoint request failed: 403") ||
+    message.includes("entrypoint request failed: 429") ||
+    message.includes("entrypoint request timeout") ||
+    message.includes("aborted") ||
+    message.includes("access denied") ||
+    message.includes("captcha") ||
+    message.includes("<!doctype html")
+  );
+}
+
+async function fetchCloudFollowEntrypointPayload(path) {
+  const endpoint = `https://www.ozon.ru/api/entrypoint-api.bx/page/json/v2?url=${encodeURIComponent(path)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OZON_ENTRYPOINT_FETCH_TIMEOUT_MS);
+  let response = null;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        accept: "application/json"
+      },
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Ozon entrypoint request timeout after ${OZON_ENTRYPOINT_FETCH_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Ozon entrypoint request failed: ${response.status} ${body.slice(0, 200)}`);
+  }
+  const payload = await response.json();
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Ozon entrypoint returned invalid payload.");
+  }
+  return payload;
+}
+
+async function fetchCloudFollowEntrypointBundle(productId) {
+  const normalizedProductId = Number(productId);
+  if (!Number.isFinite(normalizedProductId)) {
+    throw new Error("Invalid product id for entrypoint bundle.");
+  }
+  const paths = buildCloudFollowEntrypointPaths(normalizedProductId);
+  const payloads = [];
+  for (const path of paths) {
+    payloads.push(await fetchCloudFollowEntrypointPayload(path));
+  }
+  return {
+    product_id: normalizedProductId,
+    source_url: `https://www.ozon.ru/product/${normalizedProductId}/`,
+    payloads
+  };
+}
+
+function collectCloudFollowVariantIds(value, result, limit = 200, depth = 0) {
+  if (result.size >= limit || depth > 32 || value == null) {
     return;
   }
 
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Ozon tab load timeout"));
-    }, timeoutMs);
-
-    function listener(updatedTabId, changeInfo) {
-      if (updatedTabId !== tabId || changeInfo.status !== "complete") {
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+  if (typeof value === "number") {
+    if (Number.isFinite(value) && value >= 100000) {
+      result.add(Math.trunc(value));
     }
+    return;
+  }
 
-    chrome.tabs.onUpdated.addListener(listener);
-  });
+  if (typeof value === "string") {
+    const text = String(value);
+    const linkMatches = text.match(/\/product\/(\d{6,})\//g) || [];
+    for (const item of linkMatches) {
+      const idMatch = item.match(/(\d{6,})/);
+      if (idMatch) {
+        result.add(Number(idMatch[1]));
+      }
+      if (result.size >= limit) {
+        break;
+      }
+    }
+    if (result.size < limit) {
+      const rawIdMatch = text.match(/\b(\d{7,})\b/g) || [];
+      for (const item of rawIdMatch) {
+        const parsed = Number(item);
+        if (Number.isFinite(parsed) && parsed >= 100000) {
+          result.add(parsed);
+        }
+        if (result.size >= limit) {
+          break;
+        }
+      }
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectCloudFollowVariantIds(item, result, limit, depth + 1);
+      if (result.size >= limit) {
+        break;
+      }
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      const lowerKey = key.toLowerCase();
+      if (result.size >= limit) {
+        break;
+      }
+      if (item != null && (lowerKey === "productid" || lowerKey === "sku")) {
+        const parsed = Number(item);
+        if (Number.isFinite(parsed) && parsed >= 100000) {
+          result.add(Math.trunc(parsed));
+        }
+      }
+      collectCloudFollowVariantIds(item, result, limit, depth + 1);
+    }
+  }
 }
 
-async function sendCloudFollowFetchMessage(tabId, task) {
-  const payload = {
+function extractCloudFollowVariantIdsFromPayload(payloads, baseProductId, maxVariants) {
+  const candidates = new Set();
+  collectCloudFollowVariantIds(payloads, candidates, Math.max(20, maxVariants * 8), 0);
+  const result = [];
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate) || Number(candidate) === Number(baseProductId)) {
+      continue;
+    }
+    result.push(Number(candidate));
+    if (result.length >= Math.max(0, maxVariants - 1)) {
+      break;
+    }
+  }
+  return result;
+}
+
+async function buildCloudFollowEntrypointBundles(task) {
+  const baseProductId = resolveCloudFollowCollectProductId(task);
+  if (!baseProductId) {
+    throw new Error("Cannot resolve Ozon product id from collect task.");
+  }
+  const maxVariants = Math.max(1, Math.min(100, Number(task?.max_variants || 20)));
+  const includeVariants = Boolean(task?.include_variants);
+  const bundles = [];
+  const baseBundle = await fetchCloudFollowEntrypointBundle(baseProductId);
+  bundles.push(baseBundle);
+
+  if (!includeVariants) {
+    return bundles;
+  }
+
+  const variantIds = extractCloudFollowVariantIdsFromPayload(
+    baseBundle.payloads || [],
+    baseProductId,
+    maxVariants
+  );
+  for (const variantId of variantIds) {
+    try {
+      bundles.push(await fetchCloudFollowEntrypointBundle(variantId));
+    } catch (error) {
+      console.warn(
+        "[ozon-weight-extension] cloud follow variant fetch failed",
+        variantId,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+  return bundles;
+}
+
+async function fetchCloudFollowProductDataViaTab(task) {
+  const productId = resolveCloudFollowCollectProductId(task);
+  if (!productId) {
+    throw new Error("Cannot resolve Ozon product id from collect task.");
+  }
+
+  const includeVariants = Boolean(task?.include_variants);
+  const maxVariants = Math.max(1, Math.min(100, Number(task?.max_variants || 20)));
+  const productUrl = resolveCloudFollowCollectProductUrl(task, productId);
+  const requestPayload = {
     type: "fetch-ozon-product-data",
-    productId: task.resolved_product_id || task.reference,
-    productUrl: resolveCloudFollowCollectUrl(task),
-    includeVariants: Boolean(task.include_variants),
-    maxVariants: Number(task.max_variants || 20)
+    productId,
+    productUrl,
+    includeVariants,
+    maxVariants
   };
 
-  try {
-    return await chrome.tabs.sendMessage(tabId, payload);
-  } catch (error) {
-    const message = String(error?.message || error || "");
-    if (!/Receiving end does not exist/i.test(message)) {
-      throw error;
+  let lastError = null;
+  const tabs = await chrome.tabs.query({});
+  const buyerTabs = tabs.filter((tab) => tab.id && isOzonBuyerTabUrl(tab.url || ""));
+
+  for (const tab of buyerTabs) {
+    try {
+      const response = await sendMessageToTab(tab.id, requestPayload);
+      if (response?.ok && response?.productData) {
+        return response;
+      }
+      lastError = response?.error || "Ozon content script returned empty payload.";
+    } catch (error) {
+      lastError = String(error);
     }
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"]
-    });
-    await delay(800);
-    return chrome.tabs.sendMessage(tabId, payload);
   }
+
+  try {
+    const bridgeTab = await ensureOzonBuyerBridgeTab(productUrl);
+    const response = await sendMessageToTab(bridgeTab.id, requestPayload);
+    if (response?.ok && response?.productData) {
+      return response;
+    }
+    lastError = response?.error || lastError;
+  } catch (error) {
+    lastError = String(error);
+  }
+
+  throw new Error(lastError || "Ozon product fetch failed: no buyer tab available.");
 }
 
 async function markCloudFollowCollectTaskResult(taskId, result) {
@@ -1087,41 +1442,51 @@ async function markCloudFollowCollectTaskResult(taskId, result) {
 }
 
 async function processCloudFollowCollectTask(task) {
-  const url = resolveCloudFollowCollectUrl(task);
-  if (!url) {
-    await markCloudFollowCollectTaskResult(task.id, {
-      ok: false,
-      error: "Cannot resolve Ozon product URL from collect task"
-    });
-    return;
-  }
-
-  let tab = null;
   try {
-    tab = await chrome.tabs.create({ url, active: false });
-    if (!tab?.id) {
-      throw new Error("Failed to create Ozon collect tab");
-    }
-    await waitForTabLoaded(tab.id, 45000);
-    await delay(1500);
-    const collected = await sendCloudFollowFetchMessage(tab.id, task);
-    if (!collected?.ok) {
-      throw new Error(collected?.error || "Extension product collect failed");
-    }
+    const bundles = await buildCloudFollowEntrypointBundles(task);
     await markCloudFollowCollectTaskResult(task.id, {
       ok: true,
-      product_data: collected.productData || null,
-      product_data_list: Array.isArray(collected.productDataList) ? collected.productDataList : null
+      entrypoint_bundle: bundles[0] || null,
+      entrypoint_bundle_list: bundles
     });
+    return;
   } catch (error) {
+    if (isCloudFollowEntrypointBlockedError(error)) {
+      try {
+        const response = await fetchCloudFollowProductDataViaTab(task);
+        const productData =
+          response?.productData && typeof response.productData === "object" ? response.productData : null;
+        const productDataList = Array.isArray(response?.productDataList)
+          ? response.productDataList.filter((item) => item && typeof item === "object")
+          : productData
+            ? [productData]
+            : [];
+        if (!productData && !productDataList.length) {
+          throw new Error("Ozon content script returned empty product payload.");
+        }
+
+        await markCloudFollowCollectTaskResult(task.id, {
+          ok: true,
+          product_data: productData || productDataList[0] || null,
+          product_data_list: productDataList
+        });
+        return;
+      } catch (fallbackError) {
+        const entrypointMessage = error instanceof Error ? error.message : String(error);
+        const fallbackMessage =
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        await markCloudFollowCollectTaskResult(task.id, {
+          ok: false,
+          error: `${entrypointMessage}; tab fallback failed: ${fallbackMessage}`
+        }).catch(() => null);
+        return;
+      }
+    }
+
     await markCloudFollowCollectTaskResult(task.id, {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     }).catch(() => null);
-  } finally {
-    if (tab?.id) {
-      await chrome.tabs.remove(tab.id).catch(() => null);
-    }
   }
 }
 
@@ -1138,11 +1503,28 @@ async function pollCloudFollowCollectTasks() {
     const deviceId = await getCloudFollowDeviceId();
     const { data } = await fetchHdJsonSafe("/api/v1/extension/cloud-follow/tasks/claim", {
       method: "POST",
-      body: JSON.stringify({ limit: 1, device_id: deviceId })
+      body: JSON.stringify({ limit: CLOUD_FOLLOW_COLLECT_BATCH_LIMIT, device_id: deviceId })
     });
     const tasks = Array.isArray(data?.result) ? data.result : [];
-    for (const task of tasks) {
-      await processCloudFollowCollectTask(task);
+    if (tasks.length) {
+      const queue = tasks.slice();
+      const workerCount = Math.max(1, Math.min(CLOUD_FOLLOW_COLLECT_CONCURRENCY, queue.length));
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (queue.length) {
+            const task = queue.shift();
+            if (!task) {
+              continue;
+            }
+            await processCloudFollowCollectTask(task);
+          }
+        })
+      );
+    }
+    if (tasks.length >= CLOUD_FOLLOW_COLLECT_BATCH_LIMIT) {
+      setTimeout(() => {
+        void pollCloudFollowCollectTasks();
+      }, CLOUD_FOLLOW_COLLECT_DRAIN_DELAY_MS);
     }
   } catch (error) {
     if (error?.code !== "cloud_auth_required") {
@@ -1158,6 +1540,7 @@ async function pollCloudFollowCollectTasks() {
 
 function ensureCloudFollowCollectAlarm() {
   chrome.alarms.create(CLOUD_FOLLOW_COLLECT_ALARM, {
+    when: Date.now() + 5000,
     periodInMinutes: CLOUD_FOLLOW_COLLECT_INTERVAL_MINUTES
   });
 }
@@ -1746,6 +2129,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === "get-daily-analytics-summary") {
+      const summary = await getDailyAnalyticsUploadSummary(message.maxRecords || 5000);
+      sendResponse({ ok: true, summary });
+      return;
+    }
+
+    if (message.type === "upload-daily-analytics") {
+      try {
+        const result = await uploadDailyAnalyticsSnapshot({
+          storeId: message.storeId || null,
+          maxRecords: message.maxRecords || 5000
+        });
+        sendResponse({ ok: true, ...result });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          code: error?.code || null,
+          error: error instanceof Error ? error.message : String(error),
+          loginUrl: error?.code === "cloud_auth_required" ? buildCloudLoginUrl() : null
+        });
+      }
+      return;
+    }
+
+    if (message.type === "get-hot-tags-upload-summary") {
+      const summary = await getHotTagsUploadSummary();
+      sendResponse({ ok: true, summary });
+      return;
+    }
+
+    if (message.type === "upload-hot-tags") {
+      try {
+        const result = await uploadHotTagsSnapshot({
+          maxRows: message.maxRows || HOT_TAGS_UPLOAD_DEFAULTS.maxRows,
+          groupSampleLimit: message.groupSampleLimit || HOT_TAGS_UPLOAD_DEFAULTS.groupSampleLimit,
+          batchSize: message.batchSize || HOT_TAGS_UPLOAD_DEFAULTS.batchSize
+        });
+        sendResponse({ ok: true, ...result });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          code: error?.code || null,
+          error: error instanceof Error ? error.message : String(error),
+          loginUrl: error?.code === "cloud_auth_required" ? buildCloudLoginUrl() : null
+        });
+      }
+      return;
+    }
+
     sendResponse({ ok: false, error: "unknown-message-type" });
   })().catch((error) => {
     sendResponse({ ok: false, error: String(error) });
@@ -1758,24 +2190,26 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void removeJob(tabId);
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm?.name === CLOUD_FOLLOW_COLLECT_ALARM) {
-    void pollCloudFollowCollectTasks();
+    await pollCloudFollowCollectTasks();
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  void injectContentScriptIntoOpenTabs();
+chrome.runtime.onInstalled.addListener(async () => {
+  await injectContentScriptIntoOpenTabs();
   ensureCloudFollowCollectAlarm();
-  void pollCloudFollowCollectTasks();
+  await pollCloudFollowCollectTasks();
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  void injectContentScriptIntoOpenTabs();
+chrome.runtime.onStartup.addListener(async () => {
+  await injectContentScriptIntoOpenTabs();
   ensureCloudFollowCollectAlarm();
-  void pollCloudFollowCollectTasks();
+  await pollCloudFollowCollectTasks();
 });
 
-void injectContentScriptIntoOpenTabs();
-ensureCloudFollowCollectAlarm();
-void pollCloudFollowCollectTasks();
+void (async () => {
+  await injectContentScriptIntoOpenTabs();
+  ensureCloudFollowCollectAlarm();
+  await pollCloudFollowCollectTasks();
+})();

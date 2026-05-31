@@ -17,9 +17,9 @@ from urllib.parse import parse_qs, quote, urlparse
 import httpx
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from jose import JWTError, jwt
-from sqlalchemy import func, inspect, or_, text
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session
 from websocket import create_connection
 
@@ -44,9 +44,12 @@ from ozon_frontend_product import build_product_data as build_ozon_frontend_prod
 from ozon_frontend_product import extract_product_id as extract_ozon_frontend_product_id
 from ozon_client import (
     fetch_fbs_postings,
+    get_fbs_package_label,
+    get_product_stocks_by_warehouse_fbs,
     get_products_info_list,
     get_product_total_count,
     get_upload_task_info,
+    list_warehouses,
     list_products_page,
     upload_products,
     verify_ozon_credentials,
@@ -66,6 +69,7 @@ CHROME_DEVTOOLS_BASE = settings.chrome_devtools_base
 OZON_BUYER_ORIGIN = "https://www.ozon.ru"
 _ACTIVITY_PRODUCT_DETAILS_CACHE_TTL_SECONDS = 600.0
 _ACTIVITY_QUERY_CACHE_TTL_SECONDS = 120.0
+_ACTIVITY_ACTIONS_CACHE_TTL_SECONDS = 86400.0
 _ACTIVITY_CACHE_LOCK = Lock()
 _ACTIVITY_PRODUCT_DETAILS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _ACTIVITY_QUERY_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
@@ -92,6 +96,8 @@ SELLER_HOT_TAGS_CACHE_FILE = Path(__file__).resolve().parent / "cache" / "seller
 SELLER_PRODUCT_MARKET_CACHE_TTL_SECONDS = SELLER_ANALYTICS_CACHE_TTL_SECONDS
 SELLER_PRODUCT_MARKET_CACHE_LOCK = Lock()
 SELLER_PRODUCT_MARKET_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_LOGIN_AUTO_SYNC_LOCAL_LOCK = Lock()
+_LOGIN_AUTO_SYNC_LOCAL_SLOTS: Dict[str, float] = {}
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 PASSWORD_HASH_ALGORITHM = "sha256"
 PASSWORD_HASH_ITERATIONS = 260000
@@ -136,6 +142,14 @@ UPLOAD_RESULT_POLL_INTERVAL_SECONDS = int(settings.UPLOAD_RESULT_POLL_INTERVAL_S
 UPLOAD_TIMEOUT_SECONDS = int(settings.UPLOAD_TIMEOUT_SECONDS)
 UPLOAD_MAX_ATTEMPTS = int(settings.UPLOAD_MAX_ATTEMPTS)
 ORDER_SYNC_INTERVAL_MINUTES = int(settings.ORDER_SYNC_INTERVAL_MINUTES)
+LOGIN_AUTO_SYNC_JOB_TYPE = "login_auto_sync"
+LOGIN_AUTO_SYNC_DAYS = 30
+EXTENSION_DAILY_ANALYTICS_UPLOAD_LOCK = Lock()
+EXTENSION_DAILY_ANALYTICS_UPLOAD_FILE = (
+    Path(__file__).resolve().parent / "cache" / "extension_daily_analytics_uploads.jsonl"
+)
+EXTENSION_DAILY_ANALYTICS_UPLOAD_MAX_RECORDS = 5000
+EXTENSION_DAILY_ANALYTICS_UPLOAD_MAX_METRICS = 80
 
 
 def _table_exists(table_name: str) -> bool:
@@ -143,6 +157,145 @@ def _table_exists(table_name: str) -> bool:
         return inspect(engine).has_table(table_name)
     except Exception:
         return False
+
+
+def _trim_text(value: Any, max_length: int = 500) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:max_length]
+
+
+def _to_positive_int(value: Any) -> Optional[int]:
+    try:
+        numeric = int(float(value))
+    except Exception:
+        return None
+    return numeric if numeric > 0 else None
+
+
+def _to_iso_utc_text(value: Any) -> Optional[str]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = f"{raw[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except Exception:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _normalize_extension_daily_analytics_metrics(raw_metrics: Any) -> List[Dict[str, Optional[str]]]:
+    if not isinstance(raw_metrics, list):
+        return []
+
+    result: List[Dict[str, Optional[str]]] = []
+    for item in raw_metrics[:EXTENSION_DAILY_ANALYTICS_UPLOAD_MAX_METRICS]:
+        if not isinstance(item, dict):
+            continue
+        label = _trim_text(item.get("label"), 100)
+        key = _trim_text(item.get("key"), 80)
+        value = _trim_text(item.get("value"), 200)
+        if not label and not key and not value:
+            continue
+        result.append({"key": key, "label": label, "value": value})
+    return result
+
+
+def _normalize_extension_daily_analytics_record(raw_item: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_item, dict):
+        return None
+
+    product_id = _to_positive_int(raw_item.get("productId") or raw_item.get("product_id"))
+    if not product_id:
+        return None
+
+    return {
+        "productId": product_id,
+        "title": _trim_text(raw_item.get("title"), 300),
+        "sourceUrl": _trim_text(raw_item.get("sourceUrl") or raw_item.get("source_url"), 1000),
+        "status": _trim_text(raw_item.get("status"), 40) or "unknown",
+        "notice": _trim_text(raw_item.get("notice"), 500),
+        "updatedAt": _to_iso_utc_text(raw_item.get("updatedAt") or raw_item.get("updated_at"))
+        or datetime.now(timezone.utc).isoformat(),
+        "metrics": _normalize_extension_daily_analytics_metrics(raw_item.get("metrics")),
+        "raw": raw_item.get("raw") if isinstance(raw_item.get("raw"), dict) else None,
+    }
+
+
+def _normalize_extension_daily_analytics_records(raw_records: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_records, list):
+        return []
+
+    result: List[Dict[str, Any]] = []
+    for item in raw_records[:EXTENSION_DAILY_ANALYTICS_UPLOAD_MAX_RECORDS]:
+        normalized = _normalize_extension_daily_analytics_record(item)
+        if normalized:
+            result.append(normalized)
+    return result
+
+
+def _normalize_extension_daily_analytics_context(raw_context: Any) -> Dict[str, Any]:
+    if not isinstance(raw_context, dict):
+        return {}
+
+    company_id = _to_positive_int(raw_context.get("companyId") or raw_context.get("company_id"))
+    seller_id = _to_positive_int(raw_context.get("sellerId") or raw_context.get("seller_id"))
+    seller_url = _trim_text(raw_context.get("sellerUrl") or raw_context.get("seller_url"), 1000)
+    updated_at = _to_iso_utc_text(raw_context.get("updatedAt") or raw_context.get("updated_at"))
+
+    result: Dict[str, Any] = {}
+    if company_id is not None:
+        result["companyId"] = company_id
+    if seller_id is not None:
+        result["sellerId"] = seller_id
+    if seller_url:
+        result["sellerUrl"] = seller_url
+    if updated_at:
+        result["updatedAt"] = updated_at
+    return result
+
+
+def _append_extension_daily_analytics_upload_snapshot(
+    *,
+    username: str,
+    store: models.Store,
+    source: str,
+    uploaded_at: datetime,
+    context: Dict[str, Any],
+    stats: Dict[str, Any],
+    records: Sequence[Dict[str, Any]],
+) -> int:
+    payload = {
+        "type": "extension_daily_analytics_upload",
+        "uploadedAt": uploaded_at.astimezone(timezone.utc).isoformat(),
+        "source": source or "extension_daily_analytics",
+        "username": username,
+        "tenantId": store.tenant_id,
+        "storeId": store.id,
+        "storeName": store.store_name,
+        "context": context,
+        "stats": stats,
+        "records": list(records),
+    }
+    line = json.dumps(payload, ensure_ascii=False)
+    EXTENSION_DAILY_ANALYTICS_UPLOAD_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with EXTENSION_DAILY_ANALYTICS_UPLOAD_LOCK:
+        with EXTENSION_DAILY_ANALYTICS_UPLOAD_FILE.open("a", encoding="utf-8") as fp:
+            fp.write(line)
+            fp.write("\n")
+    return len(records)
 
 
 def _ensure_product_schema() -> None:
@@ -228,6 +381,8 @@ def _ensure_tenant_schema() -> None:
     _add_column_if_missing("users", "primary_tenant_id", "primary_tenant_id INTEGER")
     _add_column_if_missing("users", "last_login_at", "last_login_at TIMESTAMP")
     _add_column_if_missing("stores", "tenant_id", "tenant_id INTEGER")
+    _add_column_if_missing("stores", "activity_actions_cache", "activity_actions_cache TEXT")
+    _add_column_if_missing("stores", "activity_actions_synced_at", "activity_actions_synced_at TIMESTAMP")
     _add_column_if_missing("upload_jobs", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("upload_jobs", "attempt_count", "attempt_count INTEGER DEFAULT 0 NOT NULL")
     _add_column_if_missing("upload_jobs", "max_attempts", "max_attempts INTEGER DEFAULT 3 NOT NULL")
@@ -243,6 +398,9 @@ def _ensure_tenant_schema() -> None:
     _add_column_if_missing("upload_jobs", "timeout_seconds", "timeout_seconds INTEGER DEFAULT 900 NOT NULL")
     _add_column_if_missing("upload_job_items", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("products", "tenant_id", "tenant_id INTEGER")
+    _add_column_if_missing("products", "activity_sync_state", "activity_sync_state VARCHAR DEFAULT 'NO'")
+    _add_column_if_missing("products", "activity_sync_actions", "activity_sync_actions TEXT")
+    _add_column_if_missing("products", "activity_synced_at", "activity_synced_at TIMESTAMP")
     _add_column_if_missing("order_records", "tenant_id", "tenant_id INTEGER")
     _add_column_if_missing("pricing_templates", "tenant_id", "tenant_id INTEGER")
 
@@ -632,7 +790,13 @@ async def _submit_cloud_follow_collect_task_payloads(
     task: models.CloudFollowCollectTask,
     product_payloads: List[Dict[str, Any]],
 ) -> models.UploadJob:
-    normalized_limit = max(1, min(100, int(task.max_variants or 20)))
+    normalized_limit = max(
+        1,
+        min(
+            int(settings.UPLOAD_MAX_ITEMS_PER_JOB),
+            int(task.max_variants or settings.UPLOAD_MAX_ITEMS_PER_JOB),
+        ),
+    )
     source_payloads = _dedupe_cloud_follow_product_payloads(product_payloads, normalized_limit)
     if not source_payloads:
         raise HTTPException(status_code=400, detail="No product data was returned by extension")
@@ -1398,96 +1562,106 @@ def _chrome_runtime_evaluate(
     return None
 
 
-def _fetch_seller_warehouses_from_browser() -> Dict[str, Any]:
-    target = _pick_seller_target()
-    script = """
-    (async () => {
-      const companyId = Number((document.cookie.match(/(?:^|; )sc_company_id=(\\d+)/) || [])[1] || 0)
-      if (!companyId) {
-        return JSON.stringify({
-          ok: false,
-          error: '当前 Seller 页面缺少 sc_company_id cookie',
-          sellerUrl: location.href,
-        })
-      }
-      try {
-        const response = await fetch('/api/site/logistic-service/v5/facade/warehouse/list', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ companyId }),
-        })
-        const text = await response.text()
-        let data = null
-        try {
-          data = JSON.parse(text)
-        } catch (error) {
-          data = null
-        }
-        return JSON.stringify({
-          ok: response.ok,
-          status: response.status,
-          companyId,
-          sellerUrl: location.href,
-          data,
-          text: response.ok ? '' : text.slice(0, 1200),
-        })
-      } catch (error) {
-        return JSON.stringify({
-          ok: false,
-          error: String(error),
-          companyId,
-          sellerUrl: location.href,
-        })
-      }
-    })()
-    """
-    raw_payload = _chrome_runtime_evaluate(target, script, await_promise=True)
-    try:
-        payload = json.loads(str(raw_payload or "{}"))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Seller 页面返回了无法解析的数据: {exc}") from exc
+def _extract_warehouse_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    result = payload.get("result")
+    if isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    if isinstance(result, dict):
+        for key in ("warehouses", "items", "result"):
+            rows = result.get(key)
+            if isinstance(rows, list):
+                return [item for item in rows if isinstance(item, dict)]
+    for key in ("warehouses", "items"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [item for item in rows if isinstance(item, dict)]
+    return []
 
-    if not payload.get("ok"):
-        detail = payload.get("text") or payload.get("error") or "Seller 仓库接口调用失败"
-        raise HTTPException(status_code=400, detail=detail)
 
-    company_id = int(payload.get("companyId") or 0)
-    if company_id <= 0:
-        raise HTTPException(status_code=400, detail="Seller 页面没有返回有效 companyId")
+def _normalize_ozon_warehouse(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    warehouse_id = _safe_int(
+        row.get("warehouse_id")
+        or row.get("warehouseId")
+        or row.get("id")
+        or row.get("warehouse_id_lms"),
+        0,
+    )
+    name = str(
+        row.get("name")
+        or row.get("warehouse_name")
+        or row.get("warehouseName")
+        or ""
+    ).strip()
+    if warehouse_id <= 0 or not name:
+        return None
 
-    warehouse_rows = payload.get("data", {}).get("warehouses") or []
-    warehouses: List[Dict[str, Any]] = []
-    for row in warehouse_rows:
-        if not isinstance(row, dict):
-            continue
-        warehouse_id = int(row.get("warehouseId") or 0)
-        name = str(row.get("name") or "").strip()
-        if warehouse_id <= 0 or not name:
-            continue
+    raw_address = row.get("address")
+    address_data = raw_address if isinstance(raw_address, dict) else {}
+    address_parts = [
+        str(address_data.get(key) or "").strip()
+        for key in ("country", "region", "city", "street", "house", "building")
+    ]
+    address = (
+        ", ".join(part for part in address_parts if part)
+        or (str(raw_address).strip() if raw_address and not isinstance(raw_address, dict) else "")
+        or str(row.get("address_text") or row.get("addressText") or "").strip()
+        or None
+    )
+    city = str(row.get("city") or address_data.get("city") or "").strip() or None
+    return {
+        "warehouse_id": warehouse_id,
+        "name": name,
+        "status": str(row.get("status") or "").strip() or None,
+        "status_lms": str(row.get("status_lms") or row.get("statusLms") or "").strip()
+        or None,
+        "city": city,
+        "address": address,
+    }
 
-        address_data = row.get("address") or {}
-        address_parts = [
-            str(address_data.get(key) or "").strip()
-            for key in ("country", "region", "city", "street", "house", "building")
-        ]
-        warehouses.append(
-            {
-                "warehouse_id": warehouse_id,
-                "name": name,
-                "status": str(row.get("status") or "").strip() or None,
-                "status_lms": str(row.get("statusLms") or "").strip() or None,
-                "city": str(address_data.get("city") or "").strip() or None,
-                "address": ", ".join(part for part in address_parts if part) or None,
-            }
+
+async def _sync_store_warehouses_from_ozon(
+    db: Session,
+    store: models.Store,
+) -> Dict[str, Any]:
+    result = await list_warehouses(store.client_id, store.api_key)
+    if not result.get("ok"):
+        detail = result.get("error") or "unknown_error"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Ozon warehouse API failed for {store.store_name}: {detail}",
         )
 
-    if not warehouses:
-        raise HTTPException(status_code=400, detail="当前 Seller 页面没有返回仓库列表")
+    rows = _extract_warehouse_rows(result.get("data") or {})
+    warehouses: List[Dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    seen_names: set[str] = set()
+    for row in rows:
+        warehouse = _normalize_ozon_warehouse(row)
+        if warehouse is None:
+            continue
+        warehouse_id = int(warehouse["warehouse_id"])
+        name = str(warehouse["name"])
+        if warehouse_id in seen_ids or name in seen_names:
+            continue
+        seen_ids.add(warehouse_id)
+        seen_names.add(name)
+        warehouses.append(warehouse)
 
+    if not warehouses:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Ozon warehouse API returned no warehouses for {store.store_name}",
+        )
+
+    store.warehouse_info = "\n".join(str(item["name"]) for item in warehouses)
+    store.key_status = "active"
+    synced_inventory_items = await _sync_store_product_warehouse_stocks_from_ozon(db, store)
+    db.flush()
     return {
-        "company_id": company_id,
-        "seller_url": str(payload.get("sellerUrl") or target.get("url") or ""),
+        "ok": True,
+        "message": f"已通过官方 API 同步 {len(warehouses)} 个 Ozon 仓库，并更新 {synced_inventory_items} 个商品库存",
+        "store_id": store.id,
+        "synced_inventory_items": synced_inventory_items,
         "warehouses": warehouses,
     }
 
@@ -1766,6 +1940,59 @@ def _normalize_market_period(period: Optional[str]) -> str:
     if normalized in {"7_days", "28_days", "quarter", "year"}:
         return normalized
     return "28_days"
+
+
+def _market_period_label(period: str) -> str:
+    return {
+        "7_days": "7 days",
+        "28_days": "28 days",
+        "quarter": "Quarter",
+        "year": "Year",
+    }.get(_normalize_market_period(period), "28 days")
+
+
+def _empty_seller_market_category_trends(
+    *,
+    root_scope: str,
+    period: str,
+    path_ids: Optional[Sequence[int]] = None,
+    unavailable_reason: str = "",
+) -> Dict[str, Any]:
+    normalized_period = _normalize_market_period(period)
+    normalized_scope = str(root_scope or "current").strip().lower()
+    if normalized_scope == "all":
+        response_root_scope = "all"
+        scope_label = "Seller market trends unavailable"
+        base_path_label = "All categories"
+    else:
+        response_root_scope = "selected" if path_ids else "none"
+        scope_label = "Seller current category unavailable"
+        base_path_label = ""
+
+    return {
+        "scopeLabel": scope_label,
+        "sourceUrl": "",
+        "companyId": 0,
+        "rootScope": response_root_scope,
+        "path": list(path_ids or []),
+        "basePathLabel": base_path_label,
+        "rootOptions": [],
+        "level": 1,
+        "maxLevel": 3,
+        "canDrillDown": False,
+        "group": "",
+        "period": normalized_period,
+        "periodLabel": _market_period_label(normalized_period),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "charts": {
+            "sales": [],
+            "units": [],
+            "sellers": [],
+        },
+        "table": [],
+        "status": "unavailable",
+        "detail": unavailable_reason,
+    }
 
 
 def _fetch_seller_market_category_trends_from_browser(
@@ -3732,6 +3959,47 @@ def _build_seller_hot_tag_rows(
     return rows
 
 
+def _build_extension_hot_tags_result(
+    payload: schemas.ExtensionHotTagsUploadRequest,
+    *,
+    username: str,
+    tenant_id: Optional[int],
+    cached_at: float,
+    previous_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    del tenant_id
+    generated_at = _as_utc(payload.generated_at) or datetime.now(timezone.utc)
+    raw_payload = {
+        "rows": payload.rows,
+        "queryGroups": payload.query_groups,
+        "groups": payload.groups,
+    }
+    result = {
+        "result": _build_seller_hot_tag_rows(raw_payload),
+        "meta": {
+            "scope": "seller_all_queries",
+            "source": "extension_hot_tags_upload",
+            "total": _safe_int(payload.fetched_total, len(payload.rows or [])),
+            "availableTotal": _safe_int(payload.overall_total, len(payload.rows or [])),
+            "fetchedTotal": _safe_int(payload.fetched_total, len(payload.rows or [])),
+            "groupCount": len(payload.groups or []),
+            "period": "days_7",
+            "sourceUrl": str(payload.seller_url or ""),
+            "companyId": _safe_int(payload.company_id, 0),
+            "visibleDynamicsAvailableCount": _safe_int(payload.visible_dynamics_available_count, 0),
+            "generatedAt": generated_at.isoformat(),
+            "uploadedAt": datetime.fromtimestamp(cached_at, timezone.utc).isoformat(),
+            "uploadedBy": username,
+            "cacheTtlSeconds": int(SELLER_HOT_TAGS_CACHE_TTL_SECONDS),
+            "trendSource": "",
+            "trendAvailableWindows": list(SELLER_HOT_TAGS_ALLOWED_TREND_WINDOW_DAYS),
+            "isFallback": False,
+            "manualUpload": True,
+        },
+    }
+    return _merge_seller_hot_tags_cached_dynamics(result, previous_result)
+
+
 def _fetch_seller_hot_tags_from_browser(tenant_id: Optional[int] = None) -> Dict[str, Any]:
     target = _pick_seller_target_for_search_queries()
     seller_company_id = _seller_company_id_from_target(target)
@@ -4231,53 +4499,39 @@ def _get_hot_tags_dataset(
 ) -> Dict[str, Any]:
     trend_window_days = _normalize_seller_hot_tags_trend_window_days(trend_window_days)
     cache_key = _seller_hot_tags_cache_key(tenant_id)
-    try:
-        dataset = _fetch_seller_hot_tags_from_browser(tenant_id)
-        seller_company_id = _safe_int((dataset.get("meta") or {}).get("companyId"), 0)
-        if seller_company_id:
-            cache_key = _seller_hot_tags_cache_key(tenant_id, seller_company_id)
-        disk_cache_entry = _load_seller_hot_tags_disk_cache(cache_key)
-        if disk_cache_entry:
-            return _apply_seller_hot_tags_trend_window(
-                dataset,
-                disk_cache_entry.get("history") or [],
-                _safe_float(disk_cache_entry.get("cachedAt"), 0.0),
-                trend_window_days,
-            )
-        return dataset
-    except HTTPException as exc:
-        disk_cache_entry = _load_seller_hot_tags_disk_cache(cache_key)
-        if disk_cache_entry:
-            cached_result = _apply_seller_hot_tags_trend_window(
-                disk_cache_entry["result"],
-                disk_cache_entry.get("history") or [],
-                _safe_float(disk_cache_entry.get("cachedAt"), 0.0),
-                trend_window_days,
-            )
-            meta = dict(cached_result.get("meta") or {})
-            meta["source"] = "seller_search_queries_cache"
-            meta["isFallback"] = True
-            meta["cacheStale"] = not _is_seller_hot_tags_cache_fresh(float(disk_cache_entry["cachedAt"]))
-            meta["cachedAt"] = datetime.fromtimestamp(
-                float(disk_cache_entry["cachedAt"]), timezone.utc
-            ).isoformat()
-            meta["fallbackReason"] = str(exc.detail)
-            cached_result["meta"] = meta
-            return cached_result
-        return {
-            "result": HOT_TAGS,
-            "meta": {
-                "scope": "all_categories",
-                "source": "fallback_full_category_catalog",
-                "total": len(HOT_TAGS),
-                "availableTotal": len(HOT_TAGS),
-                "fetchedTotal": len(HOT_TAGS),
-                "generatedAt": datetime.now(timezone.utc).isoformat(),
-                "cacheTtlSeconds": int(SELLER_HOT_TAGS_CACHE_TTL_SECONDS),
-                "isFallback": True,
-                "fallbackReason": str(exc.detail),
-            },
-        }
+    disk_cache_entry = _load_seller_hot_tags_disk_cache(cache_key)
+    if disk_cache_entry:
+        cached_at = _safe_float(disk_cache_entry.get("cachedAt"), 0.0)
+        cached_result = _apply_seller_hot_tags_trend_window(
+            disk_cache_entry["result"],
+            disk_cache_entry.get("history") or [],
+            cached_at,
+            trend_window_days,
+        )
+        meta = dict(cached_result.get("meta") or {})
+        meta["source"] = str(meta.get("source") or "extension_hot_tags_upload")
+        meta["manualUpload"] = True
+        meta["cacheStale"] = not _is_seller_hot_tags_cache_fresh(cached_at)
+        meta["cachedAt"] = datetime.fromtimestamp(cached_at, timezone.utc).isoformat()
+        cached_result["meta"] = meta
+        return cached_result
+
+    return {
+        "result": [],
+        "meta": {
+            "scope": "seller_all_queries",
+            "source": "extension_hot_tags_upload",
+            "total": 0,
+            "availableTotal": 0,
+            "fetchedTotal": 0,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "cacheTtlSeconds": int(SELLER_HOT_TAGS_CACHE_TTL_SECONDS),
+            "isFallback": True,
+            "manualUpload": True,
+            "uploadRequired": True,
+            "fallbackReason": "No extension hot-tags upload cache is available",
+        },
+    }
 
 MARKET_CATEGORY_BASELINES: Dict[tuple[str, str, str], Dict[str, float]] = {
     ("服饰", "女装", "夹克"): {"sales": 4_280_000.0, "volume": 58_200, "sellers": 1_840},
@@ -4304,6 +4558,15 @@ FAILED_UPLOAD_STATUSES = {"failed", "submit_failed"}
 SUCCESSFUL_UPLOAD_ITEM_STATUSES = {"imported", "processed", "success", "completed", "done"}
 FAILED_UPLOAD_ITEM_STATUSES = {"failed", "error", "rejected", "cancelled"}
 PENDING_UPLOAD_ITEM_STATUSES = {"pending", "processing", "created", "running"}
+NON_SALE_ORDER_STATUSES = {
+    "cancelled",
+    "canceled",
+    "returned",
+    "returning",
+    "not_accepted",
+    "unpaid",
+}
+NON_SALE_ORDER_STATUS_KEYWORDS = ("cancel", "return", "refund", "fail", "error", "unpaid")
 ORDER_STATUS_LABELS = {
     "awaiting_packaging": "待备货",
     "awaiting_deliver": "待发货",
@@ -4312,6 +4575,15 @@ ORDER_STATUS_LABELS = {
     "cancelled": "已取消",
     "driver_pickup": "等待揽收",
 }
+
+
+def _is_sales_countable_status(status: Optional[str]) -> bool:
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in NON_SALE_ORDER_STATUSES:
+        return False
+    return not any(keyword in normalized for keyword in NON_SALE_ORDER_STATUS_KEYWORDS)
 
 
 app = FastAPI(
@@ -4476,6 +4748,12 @@ def _database_health() -> Dict[str, Any]:
 
 
 def _browser_assist_health() -> Dict[str, Any]:
+    if not settings.ENABLE_BROWSER_ASSIST_HEALTH:
+        return {
+            "status": "disabled",
+            "base_url": CHROME_DEVTOOLS_BASE,
+        }
+
     try:
         with httpx.Client(timeout=3.0, trust_env=False) as client:
             response = client.get(f"{CHROME_DEVTOOLS_BASE}/json/version")
@@ -4509,7 +4787,10 @@ def _build_health_payload(*, include_browser: bool = False) -> Dict[str, Any]:
 
     if include_browser:
         browser_assist = _browser_assist_health()
-        if browser_assist["status"] != "ok" and payload["status"] == "ok":
+        if (
+            browser_assist["status"] not in {"ok", "disabled"}
+            and payload["status"] == "ok"
+        ):
             payload["status"] = "degraded"
         payload["browser_assist"] = browser_assist
 
@@ -4546,6 +4827,26 @@ def _enforce_redis_rate_limit(key: str, *, limit: int, window_seconds: int, deta
         return
     if count > int(limit):
         raise HTTPException(status_code=429, detail=detail)
+
+
+def _enforce_manual_sync_rate_limit(
+    action: str,
+    *,
+    username: Optional[str],
+    tenant_id: Optional[int],
+    store_id: Optional[int] = None,
+) -> None:
+    principal = f"tenant:{tenant_id}" if tenant_id is not None else f"user:{username or 'anonymous'}"
+    store_scope = f"store:{store_id}" if store_id is not None else "store:all"
+    limit = int(settings.MANUAL_SYNC_LIMIT)
+    window_seconds = int(settings.MANUAL_SYNC_WINDOW_SECONDS)
+    window_minutes = max(1, (window_seconds + 59) // 60)
+    _enforce_redis_rate_limit(
+        f"manual_sync:{action}:{principal}:{store_scope}",
+        limit=limit,
+        window_seconds=window_seconds,
+        detail=f"操作过于频繁：手动刷新/同步每 {window_minutes} 分钟最多 {limit} 次。",
+    )
 
 
 def _submit_async_task(
@@ -4604,6 +4905,53 @@ def _submit_async_task(
         "queue": queue or "default",
         "status": async_result.status,
     }
+
+
+def _login_auto_sync_slot_key(user: models.User, now_utc: datetime) -> str:
+    principal = (
+        f"tenant:{user.primary_tenant_id}"
+        if user.primary_tenant_id is not None
+        else f"user:{user.username}"
+    )
+    return f"login_auto_sync:{principal}:{now_utc.date().isoformat()}"
+
+
+def _claim_login_auto_sync_slot(user: models.User) -> bool:
+    now = datetime.now(timezone.utc)
+    key = _login_auto_sync_slot_key(user, now)
+    ttl_seconds = max(60, int(((now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now).total_seconds()))
+    redis_client = _redis_client()
+    if redis_client is not None:
+        try:
+            claimed = redis_client.set(key, "1", nx=True, ex=ttl_seconds)
+            return bool(claimed)
+        except Exception:
+            pass
+
+    now_ts = time.time()
+    with _LOGIN_AUTO_SYNC_LOCAL_LOCK:
+        for cached_key, expiry in list(_LOGIN_AUTO_SYNC_LOCAL_SLOTS.items()):
+            if expiry <= now_ts:
+                _LOGIN_AUTO_SYNC_LOCAL_SLOTS.pop(cached_key, None)
+        if key in _LOGIN_AUTO_SYNC_LOCAL_SLOTS:
+            return False
+        _LOGIN_AUTO_SYNC_LOCAL_SLOTS[key] = now_ts + ttl_seconds
+        return True
+
+
+def _trigger_login_auto_sync(user: models.User) -> None:
+    if not _claim_login_auto_sync_slot(user):
+        return
+    try:
+        _submit_async_task(
+            "ozon.login_auto_sync",
+            queue="sync",
+            days=LOGIN_AUTO_SYNC_DAYS,
+            user_owner=user.username,
+            tenant_id=user.primary_tenant_id,
+        )
+    except Exception:
+        return
 
 
 def _serialize_async_result(task_id: str) -> Dict[str, Any]:
@@ -4843,6 +5191,45 @@ def _count_successful_upload_skus(result_payload: Optional[Dict[str, Any]]) -> i
     )
 
 
+def _parse_activity_actions(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not value:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return []
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return []
+
+
+def _parse_cached_activity_action_rows(value: Any) -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    payload = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return []
+    if not isinstance(payload, list):
+        return []
+    rows: List[Dict[str, Any]] = []
+    for item in payload:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
 def _serialize_product(product: models.Product, store_name: Optional[str]) -> Dict[str, Any]:
     return {
         "id": product.id,
@@ -4864,6 +5251,9 @@ def _serialize_product(product: models.Product, store_name: Optional[str]) -> Di
         "auto_restock": product.auto_restock,
         "scheduled_shelf": product.scheduled_shelf,
         "warehouse_name": product.warehouse_name,
+        "activity_sync_state": str(product.activity_sync_state or "NO").upper(),
+        "activity_sync_actions": _parse_activity_actions(product.activity_sync_actions),
+        "activity_synced_at": _format_datetime(product.activity_synced_at),
         "price": round(product.price or 0.0, 2),
         "display_price": round(product.display_price or 0.0, 2),
         "profit": round(product.profit or 0.0, 2),
@@ -4994,8 +5384,12 @@ def _resolve_store_credentials(
 def _validate_upload_items(items: List[Dict[str, Any]]) -> None:
     if not items:
         raise HTTPException(status_code=400, detail="items cannot be empty")
-    if len(items) > 100:
-        raise HTTPException(status_code=400, detail="items cannot exceed 100 per job")
+    max_items = max(1, int(settings.UPLOAD_MAX_ITEMS_PER_JOB))
+    if len(items) > max_items:
+        raise HTTPException(
+            status_code=400,
+            detail=f"items cannot exceed {max_items} per job",
+        )
 
     required_fields = ("offer_id", "description_category_id", "type_id", "primary_image")
     seen_offer_ids: set[str] = set()
@@ -6447,6 +6841,174 @@ def _upsert_products_for_ozon_items(
     return count
 
 
+def _stock_row_quantity(row: Dict[str, Any]) -> int:
+    return _safe_int(
+        _first_non_empty(
+            row.get("present"),
+            row.get("free_stock"),
+            row.get("stock"),
+            row.get("quantity"),
+        ),
+        0,
+    )
+
+
+def _stock_row_reserved(row: Dict[str, Any]) -> int:
+    return _safe_int(row.get("reserved"), 0)
+
+
+def _is_better_stock_row(
+    candidate: Dict[str, Any],
+    current: Optional[Dict[str, Any]],
+) -> bool:
+    if current is None:
+        return True
+    candidate_qty = _stock_row_quantity(candidate)
+    current_qty = _stock_row_quantity(current)
+    if candidate_qty != current_qty:
+        return candidate_qty > current_qty
+    candidate_available = _safe_int(candidate.get("free_stock"), candidate_qty)
+    current_available = _safe_int(current.get("free_stock"), current_qty)
+    if candidate_available != current_available:
+        return candidate_available > current_available
+    return _stock_row_reserved(candidate) < _stock_row_reserved(current)
+
+
+def _stock_response_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = payload.get("products")
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict)]
+    result = payload.get("result")
+    if isinstance(result, list):
+        return [row for row in result if isinstance(row, dict)]
+    if isinstance(result, dict):
+        for key in ("products", "items", "result"):
+            rows = result.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _stock_response_cursor(payload: Dict[str, Any]) -> tuple[bool, str]:
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    has_next = bool(result.get("has_next")) if isinstance(result, dict) else False
+    cursor = str(result.get("cursor") or "") if isinstance(result, dict) else ""
+    return has_next, cursor
+
+
+async def _sync_store_product_warehouse_stocks_from_ozon(
+    db: Session,
+    store: models.Store,
+) -> int:
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.store_id == store.id)
+        .order_by(models.Product.id.asc())
+        .all()
+    )
+    if not products:
+        return 0
+
+    products_by_sku: Dict[str, models.Product] = {}
+    products_by_offer_id: Dict[str, models.Product] = {}
+    numeric_skus: List[str] = []
+    fallback_offer_ids: List[str] = []
+    for product in products:
+        sku = str(product.sku or "").strip()
+        if sku:
+            products_by_sku[sku] = product
+            if sku.isdigit():
+                numeric_skus.append(sku)
+        offer_id = str(product.offer_id or "").strip()
+        if offer_id:
+            products_by_offer_id[offer_id] = product
+            if not sku or not sku.isdigit():
+                fallback_offer_ids.append(offer_id)
+
+    numeric_skus = list(dict.fromkeys(numeric_skus))
+    fallback_offer_ids = list(dict.fromkeys(fallback_offer_ids))
+    if not numeric_skus and not fallback_offer_ids:
+        return 0
+
+    best_rows: Dict[int, Dict[str, Any]] = {}
+    batch_size = 100
+
+    def remember_stock_rows(payload: Dict[str, Any]) -> None:
+        for row in _stock_response_rows(payload):
+            product = None
+            row_sku = str(row.get("sku") or "").strip()
+            if row_sku:
+                product = products_by_sku.get(row_sku)
+            if product is None:
+                row_offer_id = str(row.get("offer_id") or "").strip()
+                product = products_by_offer_id.get(row_offer_id)
+            warehouse_name = str(row.get("warehouse_name") or "").strip()
+            if product is None or not warehouse_name:
+                continue
+            current = best_rows.get(product.id)
+            if _is_better_stock_row(row, current):
+                best_rows[product.id] = row
+
+    async def fetch_stock_batches(values: Sequence[str], *, by_sku: bool) -> None:
+        for start in range(0, len(values), batch_size):
+            batch = list(values[start : start + batch_size])
+            cursor = ""
+            while True:
+                result = await get_product_stocks_by_warehouse_fbs(
+                    store.client_id,
+                    store.api_key,
+                    skus=batch if by_sku else None,
+                    offer_ids=batch if not by_sku else None,
+                    limit=1000,
+                    cursor=cursor,
+                )
+                if not result.get("ok"):
+                    if len(batch) > 1:
+                        midpoint = max(1, len(batch) // 2)
+                        await fetch_stock_batches(batch[:midpoint], by_sku=by_sku)
+                        await fetch_stock_batches(batch[midpoint:], by_sku=by_sku)
+                        break
+                    error_text = str(result.get("error") or "")
+                    if int(result.get("status_code") or 0) == 400 and (
+                        "invalid" in error_text.lower()
+                        or "value must" in error_text.lower()
+                    ):
+                        break
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Failed to fetch Ozon warehouse stocks for {store.store_name}: {error_text or 'unknown_error'}",
+                    )
+
+                payload = result.get("data") or {}
+                remember_stock_rows(payload)
+
+                has_next, next_cursor = _stock_response_cursor(payload)
+                if not has_next or not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+    await fetch_stock_batches(numeric_skus, by_sku=True)
+    await fetch_stock_batches(fallback_offer_ids, by_sku=False)
+
+    updated = 0
+    for product in products:
+        row = best_rows.get(product.id)
+        if row is None:
+            continue
+        warehouse_name = str(row.get("warehouse_name") or "").strip()
+        if not warehouse_name:
+            continue
+        stock = _stock_row_quantity(row)
+        product.warehouse_name = warehouse_name
+        product.stock = stock
+        if not product.backup_stock:
+            product.backup_stock = stock
+        updated += 1
+
+    db.flush()
+    return updated
+
+
 async def _sync_store_products_from_ozon(db: Session, store: models.Store) -> int:
     synced = 0
     last_id = ""
@@ -6497,6 +7059,7 @@ async def _sync_store_products_from_ozon(db: Session, store: models.Store) -> in
         seen_last_ids.add(next_last_id)
         last_id = next_last_id
 
+    await _sync_store_product_warehouse_stocks_from_ozon(db, store)
     return synced
 
 
@@ -6531,6 +7094,212 @@ def _find_product_for_posting(
         .filter(models.Product.store_id == store_id, models.Product.sku.in_(keys))
         .first()
     )
+
+
+def _get_or_create_store_product(
+    db: Session,
+    store: models.Store,
+    *,
+    offer_id: Optional[str],
+    sku: Optional[str],
+) -> Optional[models.Product]:
+    keys = _product_lookup_keys(offer_id, sku)
+    if not keys:
+        return None
+    product = (
+        db.query(models.Product)
+        .filter(
+            models.Product.store_id == store.id,
+            or_(
+                models.Product.offer_id.in_(keys),
+                models.Product.sku.in_(keys),
+            ),
+        )
+        .first()
+    )
+    if product is None:
+        canonical_offer_id = str(offer_id or sku or "").strip()
+        if not canonical_offer_id:
+            return None
+        product = models.Product(
+            tenant_id=store.tenant_id,
+            store_id=store.id,
+            offer_id=canonical_offer_id,
+            sku=str(sku or canonical_offer_id).strip() or canonical_offer_id,
+            product_name=canonical_offer_id,
+            source="extension_cloud_sync",
+            status="approved",
+            country="CN",
+            activity_sync_state="NO",
+            activity_sync_actions="[]",
+        )
+        db.add(product)
+        db.flush()
+    elif not product.tenant_id:
+        product.tenant_id = store.tenant_id
+    return product
+
+
+def _sync_products_from_extension_snapshot(
+    db: Session,
+    store: models.Store,
+    items: Sequence[schemas.ExtensionSyncProductItem],
+) -> int:
+    synced = 0
+    for item in items:
+        product = _get_or_create_store_product(
+            db,
+            store,
+            offer_id=item.offer_id,
+            sku=item.sku,
+        )
+        if product is None:
+            continue
+        if item.product_name:
+            product.product_name = str(item.product_name).strip() or product.product_name
+        if item.article_no:
+            product.article_no = str(item.article_no).strip() or product.article_no
+        if item.primary_image:
+            product.primary_image = str(item.primary_image).strip() or product.primary_image
+        if item.warehouse_name:
+            product.warehouse_name = str(item.warehouse_name).strip() or product.warehouse_name
+        if item.stock is not None:
+            product.stock = max(0, int(item.stock))
+            if not product.backup_stock:
+                product.backup_stock = product.stock
+        if item.price is not None:
+            product.price = round(float(item.price), 2)
+            if product.display_price <= 0:
+                product.display_price = product.price
+        if item.status:
+            product.status = str(item.status).strip() or product.status
+        if item.offer_id:
+            product.offer_id = str(item.offer_id).strip() or product.offer_id
+        if item.sku:
+            product.sku = str(item.sku).strip() or product.sku
+        if not product.source:
+            product.source = "extension_cloud_sync"
+        synced += 1
+    db.flush()
+    return synced
+
+
+def _sync_inventory_from_extension_snapshot(
+    db: Session,
+    store: models.Store,
+    items: Sequence[schemas.ExtensionSyncInventoryItem],
+) -> int:
+    synced = 0
+    for item in items:
+        product = _get_or_create_store_product(
+            db,
+            store,
+            offer_id=item.offer_id,
+            sku=item.sku,
+        )
+        if product is None:
+            continue
+        if item.warehouse_name:
+            product.warehouse_name = str(item.warehouse_name).strip() or product.warehouse_name
+        if item.stock is not None:
+            product.stock = max(0, int(item.stock))
+        if item.backup_stock is not None:
+            product.backup_stock = max(0, int(item.backup_stock))
+        synced += 1
+    db.flush()
+    return synced
+
+
+def _sync_orders_from_extension_snapshot(
+    db: Session,
+    store: models.Store,
+    items: Sequence[schemas.ExtensionSyncOrderItem],
+) -> int:
+    synced = 0
+    for item in items:
+        posting_number = str(item.posting_number or "").strip()
+        if not posting_number:
+            continue
+        row = (
+            db.query(models.OrderRecord)
+            .filter(models.OrderRecord.posting_number == posting_number)
+            .first()
+        )
+        if row is None:
+            row = models.OrderRecord(
+                tenant_id=store.tenant_id,
+                store_id=store.id,
+                posting_number=posting_number,
+                scheme="FBS",
+                status="awaiting_packaging",
+                status_label=_format_order_status("awaiting_packaging"),
+                amount=0.0,
+                currency="RUB",
+            )
+            db.add(row)
+        status_value = str(item.status or row.status or "awaiting_packaging").strip() or "awaiting_packaging"
+        row.status = status_value
+        row.status_label = str(item.status_label or _format_order_status(status_value))
+        if item.product_name:
+            row.product_name = str(item.product_name)
+        if item.product_image:
+            row.product_image = str(item.product_image)
+        if item.amount is not None:
+            row.amount = round(float(item.amount), 2)
+        if item.currency:
+            row.currency = str(item.currency).upper()
+        if item.warehouse_name:
+            row.warehouse_name = str(item.warehouse_name)
+        if item.deadline_at is not None:
+            row.deadline_at = _as_utc(item.deadline_at)
+        if item.created_at is not None:
+            row.created_at = _as_utc(item.created_at)
+        synced += 1
+    db.flush()
+    return synced
+
+
+def _sync_activity_membership_from_extension_snapshot(
+    db: Session,
+    store: models.Store,
+    items: Sequence[schemas.ExtensionSyncActivityItem],
+    *,
+    full_refresh: bool,
+    collected_at: Optional[datetime],
+) -> int:
+    local_lookup: Dict[str, models.Product] = {}
+    for product in db.query(models.Product).filter(models.Product.store_id == store.id).all():
+        for key in _product_lookup_keys(product.offer_id, product.sku):
+            local_lookup[key] = product
+
+    memberships: Dict[int, set[str]] = {}
+    for item in items:
+        product = _resolve_activity_local_product(
+            {"offer_id": item.offer_id, "sku": item.sku},
+            {"offer_id": item.offer_id, "sku": item.sku},
+            local_lookup,
+        )
+        if product is None:
+            continue
+        title = str(
+            _first_non_empty(
+                item.action_title,
+                f"activity-{_safe_int(item.action_id, 0)}" if item.action_id else None,
+                "activity",
+            )
+        )
+        memberships.setdefault(product.id, set()).add(title)
+
+    synced_at = _as_utc(collected_at) or datetime.now(timezone.utc)
+    _apply_activity_membership_snapshot(
+        db,
+        store_id=store.id,
+        memberships=memberships,
+        synced_at=synced_at,
+        full_refresh=full_refresh,
+    )
+    db.flush()
+    return len(memberships)
 
 
 def _sync_order_from_posting(
@@ -6664,9 +7433,31 @@ async def _sync_store_orders(
     db: Session,
     store: models.Store,
     days: int,
+    *,
+    incremental: bool = False,
+    overlap_minutes: int = 0,
 ) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    since = now - timedelta(days=max(1, min(days, 365)))
+    bounded_days = max(1, min(days, 365))
+    default_since = now - timedelta(days=bounded_days)
+    since = default_since
+    if incremental:
+        latest_created = (
+            db.query(func.max(models.OrderRecord.created_at))
+            .filter(
+                models.OrderRecord.store_id == store.id,
+                models.OrderRecord.scheme == "FBS",
+            )
+            .scalar()
+        )
+        latest_created_utc = _as_utc(latest_created)
+        if latest_created_utc is not None:
+            overlap = max(0, int(overlap_minutes or 0))
+            since = latest_created_utc - timedelta(minutes=overlap)
+            if since < default_since:
+                since = default_since
+    if since > now:
+        since = now
     response = await fetch_fbs_postings(
         store.client_id,
         store.api_key,
@@ -6694,6 +7485,8 @@ async def _sync_store_orders(
         "store_id": store.id,
         "store_name": store.store_name,
         "synced": synced,
+        "incremental": bool(incremental),
+        "since": since,
     }
 
 
@@ -6980,6 +7773,7 @@ def _inventory_products_query(
     sku: str = "",
     article_no: str = "",
     warehouse_name: Optional[str] = None,
+    stock_state: str = "",
     backup_status: str = "",
     stock_min: Optional[int] = None,
     stock_max: Optional[int] = None,
@@ -6997,7 +7791,23 @@ def _inventory_products_query(
     if article_no:
         query = query.filter(models.Product.article_no.ilike(f"%{article_no}%"))
     if warehouse_name:
-        query = query.filter(models.Product.warehouse_name == warehouse_name.strip())
+        normalized_warehouse_name = warehouse_name.strip()
+        query = query.filter(
+            or_(
+                models.Product.warehouse_name == normalized_warehouse_name,
+                and_(
+                    or_(
+                        models.Product.warehouse_name.is_(None),
+                        models.Product.warehouse_name == "",
+                    ),
+                    models.Product.stock <= 0,
+                ),
+            )
+        )
+    if stock_state == "no_stock":
+        query = query.filter(models.Product.stock <= 0)
+    elif stock_state == "in_stock":
+        query = query.filter(models.Product.stock > 0)
     if backup_status == "backed_up":
         query = query.filter(models.Product.backup_stock > 0)
     elif backup_status == "unbacked":
@@ -7230,6 +8040,8 @@ def _build_category_analytics(
     }
 
     for order in orders:
+        if not _is_sales_countable_status(order.status):
+            continue
         order_date = _analytics_order_date(order)
         if order_date is None or order_date < previous_start or order_date > today:
             continue
@@ -8702,6 +9514,7 @@ def register(
     )
     db.commit()
     db.refresh(user)
+    _trigger_login_auto_sync(user)
 
     return {
         "access_token": _create_access_token(user, db),
@@ -8770,6 +9583,7 @@ def login(
     )
     db.commit()
     db.refresh(user)
+    _trigger_login_auto_sync(user)
 
     return {
         "access_token": _create_access_token(user, db),
@@ -8954,6 +9768,7 @@ def get_dashboard_trends(
             row
             for row in order_rows
             if _as_utc(row.created_at) and day_start <= _as_utc(row.created_at) < day_end
+            and _is_sales_countable_status(row.status)
         ]
         orders.append(len(day_orders))
         revenue.append(round(sum(order.amount or 0.0 for order in day_orders), 2))
@@ -8977,10 +9792,16 @@ async def get_stores(
     db: Session = Depends(get_db),
 ) -> List[models.Store]:
     username = _current_username(request)
+    tenant_id = _current_tenant_id(request)
     stores = _user_store_query(db, username).all()
     if not refresh_status or not stores:
         return stores
 
+    _enforce_manual_sync_rate_limit(
+        "store_status",
+        username=username,
+        tenant_id=tenant_id,
+    )
     verify_results = await asyncio.gather(
         *[
             verify_ozon_credentials(store.client_id, store.api_key)
@@ -9106,10 +9927,10 @@ def update_store(
 
 
 @app.post(
-    f"{settings.API_V1_STR}/stores/{{store_id}}/sync-browser-warehouses",
+    f"{settings.API_V1_STR}/stores/{{store_id}}/sync-warehouses",
     response_model=schemas.StoreWarehouseSyncResponse,
 )
-def sync_store_browser_warehouses(
+def sync_store_warehouses(
     store_id: int,
     request: Request,
     db: Session = Depends(get_db),
@@ -9119,27 +9940,13 @@ def sync_store_browser_warehouses(
     if not db_store:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    seller_payload = _fetch_seller_warehouses_from_browser()
-    names: List[str] = []
-    seen_names = set()
-    for warehouse in seller_payload["warehouses"]:
-        name = str(warehouse.get("name") or "").strip()
-        if not name or name in seen_names:
-            continue
-        seen_names.add(name)
-        names.append(name)
-
-    db_store.warehouse_info = "\n".join(names)
-    db_store.cookie_status = "active"
-    db.commit()
-
-    return {
-        "message": f"已从浏览器同步 {len(names)} 个 Ozon 仓库",
-        "store_id": db_store.id,
-        "company_id": seller_payload["company_id"],
-        "seller_url": seller_payload["seller_url"],
-        "warehouses": seller_payload["warehouses"],
-    }
+    try:
+        result = asyncio.run(_sync_store_warehouses_from_ozon(db, db_store))
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
 
 
 @app.delete(f"{settings.API_V1_STR}/stores/{{store_id}}")
@@ -9371,6 +10178,66 @@ async def submit_extension_cloud_follow_task_result(
         product_payloads.append(payload.product_data)
 
     if not product_payloads:
+        entrypoint_bundles: List[Dict[str, Any]] = []
+        if isinstance(payload.entrypoint_bundle, dict):
+            entrypoint_bundles.append(payload.entrypoint_bundle)
+        if isinstance(payload.entrypoint_bundle_list, list):
+            entrypoint_bundles.extend(
+                [item for item in payload.entrypoint_bundle_list if isinstance(item, dict)]
+            )
+
+        build_errors: List[str] = []
+        for bundle in entrypoint_bundles:
+            raw_payloads = bundle.get("payloads")
+            if not isinstance(raw_payloads, list):
+                build_errors.append("entrypoint bundle missing payloads")
+                continue
+            payload_list = [item for item in raw_payloads if isinstance(item, dict)]
+            if not payload_list:
+                build_errors.append("entrypoint bundle payloads are empty")
+                continue
+
+            raw_product_id = (
+                bundle.get("product_id")
+                or bundle.get("productId")
+                or task.resolved_product_id
+            )
+            resolved_product_id = extract_ozon_frontend_product_id(raw_product_id)
+            if not resolved_product_id:
+                resolved_product_id = extract_ozon_frontend_product_id(
+                    bundle.get("source_url") or bundle.get("sourceUrl")
+                )
+            if not resolved_product_id:
+                build_errors.append("entrypoint bundle missing product id")
+                continue
+
+            source_url = str(
+                bundle.get("source_url")
+                or bundle.get("sourceUrl")
+                or f"{OZON_BUYER_ORIGIN}/product/{int(resolved_product_id)}/"
+            )
+            try:
+                parsed_product_data = build_ozon_frontend_product_data(
+                    product_id=int(resolved_product_id),
+                    payloads=payload_list,
+                    source_url=source_url,
+                )
+                if isinstance(parsed_product_data, dict):
+                    product_payloads.append(parsed_product_data)
+                else:
+                    build_errors.append("entrypoint bundle parse returned invalid payload")
+            except Exception as exc:
+                build_errors.append(str(exc))
+
+        if not product_payloads and build_errors:
+            task.status = "collect_failed"
+            task.error = build_errors[0][:2000]
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(task)
+            return _serialize_cloud_follow_collect_task(task)
+
+    if not product_payloads:
         task.status = "collect_failed"
         task.error = "No product data was returned by extension"
         task.completed_at = datetime.now(timezone.utc)
@@ -9412,6 +10279,128 @@ async def submit_extension_cloud_follow_task_result(
 
 
 @app.post(
+    f"{settings.API_V1_STR}/extension/cloud-sync",
+    response_model=schemas.ExtensionCloudSyncResponse,
+)
+def extension_cloud_sync(
+    payload: schemas.ExtensionCloudSyncRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    store = _resolve_store(db, payload.store_id, username=username)
+    collected_at = _as_utc(payload.collected_at) or datetime.now(timezone.utc)
+    synced_products = _sync_products_from_extension_snapshot(db, store, payload.products)
+    synced_inventory = _sync_inventory_from_extension_snapshot(db, store, payload.inventory)
+    synced_orders = _sync_orders_from_extension_snapshot(db, store, payload.orders)
+    synced_activities = _sync_activity_membership_from_extension_snapshot(
+        db,
+        store,
+        payload.activities,
+        full_refresh=bool(payload.full_activity_refresh),
+        collected_at=collected_at,
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "store_id": store.id,
+        "synced_products": synced_products,
+        "synced_inventory": synced_inventory,
+        "synced_orders": synced_orders,
+        "synced_activities": synced_activities,
+        "full_activity_refresh": bool(payload.full_activity_refresh),
+        "collected_at": collected_at,
+    }
+
+
+@app.post(
+    f"{settings.API_V1_STR}/extension/analytics-daily-upload",
+    response_model=schemas.ExtensionDailyAnalyticsUploadResponse,
+)
+def extension_daily_analytics_upload(
+    payload: schemas.ExtensionDailyAnalyticsUploadRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    store = _resolve_store(db, payload.store_id, username=username)
+    uploaded_at = _as_utc(payload.uploaded_at) or datetime.now(timezone.utc)
+    normalized_records = _normalize_extension_daily_analytics_records(payload.records)
+    if not normalized_records:
+        raise HTTPException(status_code=400, detail="No valid analytics records were provided by extension")
+
+    source = _trim_text(payload.source, 120) or "extension_daily_analytics"
+    context = _normalize_extension_daily_analytics_context(payload.context)
+    stats = payload.stats if isinstance(payload.stats, dict) else {}
+    normalized_stats = {
+        "receivedCount": len(payload.records or []),
+        "storedCount": len(normalized_records),
+        "clientStats": stats,
+    }
+
+    stored_count = _append_extension_daily_analytics_upload_snapshot(
+        username=username,
+        store=store,
+        source=source,
+        uploaded_at=uploaded_at,
+        context=context,
+        stats=normalized_stats,
+        records=normalized_records,
+    )
+
+    return {
+        "ok": True,
+        "store_id": store.id,
+        "source": source,
+        "uploaded_at": uploaded_at,
+        "received_count": len(payload.records or []),
+        "stored_count": stored_count,
+    }
+
+
+@app.post(
+    f"{settings.API_V1_STR}/extension/hot-tags-upload",
+    response_model=schemas.ExtensionHotTagsUploadResponse,
+)
+def extension_hot_tags_upload(
+    payload: schemas.ExtensionHotTagsUploadRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    username = _current_username(request)
+    tenant_id = _request_tenant_id_or_user_primary(db, request, username)
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No hot-tags rows were provided by extension")
+
+    company_id = _safe_int(payload.company_id, 0)
+    cache_key = _seller_hot_tags_cache_key(tenant_id, company_id)
+    previous_entry = _load_seller_hot_tags_disk_cache(cache_key)
+    previous_result = previous_entry.get("result") if previous_entry else None
+    previous_history = previous_entry.get("history") if previous_entry else []
+    cached_at = time.time()
+    result = _build_extension_hot_tags_result(
+        payload,
+        username=username,
+        tenant_id=tenant_id,
+        cached_at=cached_at,
+        previous_result=previous_result,
+    )
+    history = _normalize_seller_hot_tags_history({"history": previous_history}, result, cached_at)
+    with SELLER_HOT_TAGS_CACHE_LOCK:
+        SELLER_HOT_TAGS_CACHE[cache_key] = (cached_at, result)
+    _save_seller_hot_tags_disk_cache(cache_key, cached_at, result, history)
+
+    return {
+        "ok": True,
+        "source": "extension_hot_tags_upload",
+        "company_id": company_id or None,
+        "uploaded_at": datetime.fromtimestamp(cached_at, timezone.utc),
+        "received_count": len(payload.rows or []),
+        "stored_count": len(result.get("result") or []),
+    }
+
+
+@app.post(
     f"{settings.API_V1_STR}/cloud-follow/preview",
     response_model=schemas.CloudFollowPreviewResponse,
 )
@@ -9420,49 +10409,13 @@ async def cloud_follow_preview(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    username = _current_username(request)
-    front_cookie, user_agent = _resolve_cloud_follow_session_config(
-        db,
-        username=username,
-        tenant_id=_current_tenant_id(request),
-        front_cookie=payload.front_cookie,
-        user_agent=payload.user_agent,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Cloud follow preview is disabled. "
+            "Use /cloud-follow/collect-tasks and let local extension collect and upload data."
+        ),
     )
-    prepared = await _prepare_cloud_follow_product_data(
-        reference=payload.reference,
-        front_cookie=front_cookie,
-        user_agent=user_agent,
-        use_browser_session=payload.use_browser_session,
-        preferred_url_fragment=payload.preferred_url_fragment,
-    )
-    product_data = prepared["product_data"]
-    description_obj = product_data.get("description") or {}
-    description_text = str(description_obj.get("text") or "").strip()
-    description_html = str(description_obj.get("html") or "").strip()
-    description_images = description_obj.get("images") or []
-    pricing_obj = product_data.get("pricing") or {}
-    variants = product_data.get("variants") or []
-    characteristics = product_data.get("characteristics") or []
-    has_description = bool(
-        description_text
-        or description_html
-        or (isinstance(description_images, list) and len(description_images) > 0)
-    )
-
-    return {
-        "ok": True,
-        "reference": prepared["reference"],
-        "resolved_product_id": prepared["resolved_product_id"],
-        "source_url": prepared["source_url"],
-        "fetch_source": prepared.get("fetch_source"),
-        "page_url": prepared.get("page_url"),
-        "title": str(product_data.get("title") or ""),
-        "variant_count": len(variants),
-        "characteristics_count": len(characteristics),
-        "has_description": has_description,
-        "has_price": bool(pricing_obj.get("uploadPrice")),
-        "product_data": product_data,
-    }
 
 
 @app.post(
@@ -9474,30 +10427,12 @@ async def cloud_follow_submit(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    username = _current_username(request)
-    tenant_id = _current_tenant_id(request)
-    front_cookie, user_agent = _resolve_cloud_follow_session_config(
-        db,
-        username=username,
-        tenant_id=tenant_id,
-        front_cookie=payload.front_cookie,
-        user_agent=payload.user_agent,
-    )
-    store = _resolve_store(db, payload.store_id, username=username)
-    return await _run_cloud_follow_submit_workflow(
-        db=db,
-        store=store,
-        reference=payload.reference,
-        include_variants=payload.include_variants,
-        max_variants=payload.max_variants,
-        price=payload.price,
-        old_price=payload.old_price,
-        follow_min_price=payload.follow_min_price,
-        model=payload.model,
-        use_browser_session=payload.use_browser_session,
-        preferred_url_fragment=payload.preferred_url_fragment,
-        front_cookie=front_cookie,
-        user_agent=user_agent,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Cloud follow direct submit is disabled. "
+            "Use /cloud-follow/collect-tasks and local extension worker."
+        ),
     )
 
 
@@ -9510,33 +10445,12 @@ def cloud_follow_submit_async(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    username = _current_username(request)
-    tenant_id = _current_tenant_id(request)
-    front_cookie, user_agent = _resolve_cloud_follow_session_config(
-        db,
-        username=username,
-        tenant_id=tenant_id,
-        front_cookie=payload.front_cookie,
-        user_agent=payload.user_agent,
-    )
-    store = _resolve_store(db, payload.store_id, username=username)
-    return _submit_async_task(
-        "ozon.cloud_follow_submit",
-        queue="browser",
-        store_id=store.id,
-        user_owner=username,
-        tenant_id=tenant_id,
-        reference=payload.reference,
-        include_variants=payload.include_variants,
-        max_variants=payload.max_variants,
-        price=payload.price,
-        old_price=payload.old_price,
-        follow_min_price=payload.follow_min_price,
-        model=payload.model,
-        use_browser_session=payload.use_browser_session,
-        preferred_url_fragment=payload.preferred_url_fragment,
-        front_cookie=front_cookie,
-        user_agent=user_agent,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Cloud follow async submit is disabled. "
+            "Use /cloud-follow/collect-tasks and local extension worker."
+        ),
     )
 
 
@@ -10030,6 +10944,12 @@ def submit_verify_stores_task(
     tenant_id = _current_tenant_id(request)
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "verify_stores",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
         "ozon.verify_stores",
         queue="sync",
@@ -10052,6 +10972,12 @@ def submit_sync_products_task(
     tenant_id = _current_tenant_id(request)
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "sync_products",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
         "ozon.sync_products",
         queue="sync",
@@ -10072,15 +10998,14 @@ def submit_sync_orders_task(
 ) -> Dict[str, Any]:
     username = _current_username(request)
     tenant_id = _current_tenant_id(request)
-    rate_key = f"manual_order_sync:{tenant_id or username}"
-    _enforce_redis_rate_limit(
-        rate_key,
-        limit=int(settings.MANUAL_ORDER_SYNC_LIMIT),
-        window_seconds=int(settings.MANUAL_ORDER_SYNC_WINDOW_SECONDS),
-        detail="操作过于频繁：订单手动同步每个用户半小时最多 5 次。",
-    )
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "sync_orders",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
         "ozon.sync_orders",
         queue="sync",
@@ -10092,10 +11017,10 @@ def submit_sync_orders_task(
 
 
 @app.post(
-    f"{settings.API_V1_STR}/jobs/sync-browser-warehouses",
+    f"{settings.API_V1_STR}/jobs/sync-warehouses",
     response_model=schemas.AsyncTaskSubmitResponse,
 )
-def submit_sync_browser_warehouses_task(
+def submit_sync_warehouses_task(
     request: Request,
     payload: schemas.StoreScopedTaskRequest = Body(default=schemas.StoreScopedTaskRequest()),
     db: Session = Depends(get_db),
@@ -10105,9 +11030,15 @@ def submit_sync_browser_warehouses_task(
     if payload.store_id is None:
         raise HTTPException(status_code=400, detail="store_id is required")
     _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "sync_warehouses",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
-        "ozon.sync_browser_warehouses",
-        queue="browser",
+        "ozon.sync_warehouses",
+        queue="sync",
         store_id=payload.store_id,
         user_owner=username,
         tenant_id=tenant_id,
@@ -10124,6 +11055,11 @@ def submit_sync_core_task(
 ) -> Dict[str, Any]:
     username = _current_username(request)
     tenant_id = _current_tenant_id(request)
+    _enforce_manual_sync_rate_limit(
+        "sync_core",
+        username=username,
+        tenant_id=tenant_id,
+    )
     return _submit_async_task(
         "ozon.sync_core",
         queue="sync",
@@ -10146,6 +11082,12 @@ def submit_refresh_analytics_task(
     tenant_id = _current_tenant_id(request)
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "refresh_analytics",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
         "ozon.refresh_analytics",
         queue="sync",
@@ -10286,6 +11228,7 @@ def list_inventory(
     sku: str = Query(default=""),
     article_no: str = Query(default=""),
     warehouse_name: str = Query(default=""),
+    stock_state: str = Query(default=""),
     backup_status: str = Query(default=""),
     stock_min: Optional[int] = Query(default=None),
     stock_max: Optional[int] = Query(default=None),
@@ -10301,6 +11244,7 @@ def list_inventory(
         sku=sku,
         article_no=article_no,
         warehouse_name=warehouse_name or None,
+        stock_state=stock_state,
         backup_status=backup_status,
         stock_min=stock_min,
         stock_max=stock_max,
@@ -10311,7 +11255,10 @@ def list_inventory(
 
     total = query.count()
     items = (
-        query.order_by(models.Product.updated_at.desc(), models.Product.id.desc())
+        query.order_by(
+            func.coalesce(models.Product.created_at, models.Product.updated_at).desc(),
+            models.Product.id.desc(),
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -10371,6 +11318,7 @@ def batch_update_inventory_stock(
             sku=payload.sku or "",
             article_no=payload.article_no or "",
             warehouse_name=warehouse_name,
+            stock_state=payload.stock_state or "",
             backup_status=payload.backup_status or "",
             archive_status=payload.archive_status or "",
             store_id=payload.store_id,
@@ -10420,8 +11368,15 @@ async def sync_orders(
     tenant_id = _current_tenant_id(request)
     if payload.store_id is not None:
         _resolve_store(db, payload.store_id, username=username)
+    _enforce_manual_sync_rate_limit(
+        "sync_orders",
+        username=username,
+        tenant_id=tenant_id,
+        store_id=payload.store_id,
+    )
     return _submit_async_task(
         "ozon.sync_orders",
+        queue="sync",
         store_id=payload.store_id,
         days=payload.days,
         user_owner=username,
@@ -10586,6 +11541,107 @@ def batch_warehouse_print(
     return {"message": f"Marked {len(rows)} orders as printed"}
 
 
+def _extract_pdf_bytes_from_ozon_label_response(payload: Dict[str, Any]) -> bytes:
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+
+    content = data.get("content")
+    if isinstance(content, (bytes, bytearray)):
+        pdf_bytes = bytes(content)
+        if pdf_bytes.startswith(b"%PDF"):
+            return pdf_bytes
+        raise HTTPException(status_code=502, detail="Ozon returned a non-PDF label payload")
+
+    result = data.get("result")
+    if not isinstance(result, dict):
+        result = {}
+
+    file_content = (
+        result.get("file_content")
+        or result.get("content")
+        or result.get("pdf")
+        or data.get("file_content")
+        or data.get("content")
+        or data.get("pdf")
+        or data.get("raw")
+    )
+    if not isinstance(file_content, str) or not file_content.strip():
+        raise HTTPException(status_code=502, detail="Ozon did not return a PDF label")
+
+    raw_content = file_content.strip()
+    if raw_content.startswith("%PDF"):
+        return raw_content.encode("latin-1", errors="ignore")
+
+    try:
+        normalized = "".join(raw_content.split())
+        return base64.b64decode(normalized, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Ozon returned an invalid PDF label payload") from exc
+
+
+def _safe_pdf_filename(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value or "").strip())
+    cleaned = cleaned.strip("-") or "waybill"
+    return f"ozon-waybill-{cleaned}.pdf"
+
+
+def _format_ozon_label_error(result: Dict[str, Any]) -> str:
+    data = result.get("data")
+    code = None
+    message = None
+    if isinstance(data, dict):
+        code = data.get("code")
+        message = data.get("message")
+
+    raw_error = str(result.get("error") or "")
+    if not message and raw_error:
+        try:
+            parsed = json.loads(raw_error)
+            if isinstance(parsed, dict):
+                code = parsed.get("code", code)
+                message = parsed.get("message")
+        except json.JSONDecodeError:
+            message = raw_error
+
+    if message == "INVALID_ARGUMENT" or code == 3:
+        return "Ozon 暂未提供这个订单的 PDF 面单，请确认订单已进入待发货并且已经生成标签。"
+    if message:
+        return f"Ozon 面单下载失败：{message}"
+    return "Ozon 面单下载失败"
+
+
+@app.post(f"{settings.API_V1_STR}/orders/{{order_id}}/waybill-pdf")
+async def download_order_waybill_pdf(
+    order_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    username = _current_username(request)
+    row = _selected_orders_query(db, [order_id], username=username).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if not row.posting_number:
+        raise HTTPException(status_code=400, detail="Order has no posting number")
+
+    store = _resolve_store(db, row.store_id, username=username)
+    result = await get_fbs_package_label(store.client_id, store.api_key, [row.posting_number])
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=_format_ozon_label_error(result))
+
+    pdf_bytes = _extract_pdf_bytes_from_ozon_label_response(result)
+    row.printed = True
+    row.downloaded = True
+    db.commit()
+
+    filename = _safe_pdf_filename(row.posting_number)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post(f"{settings.API_V1_STR}/warehouse/batch/download")
 def batch_warehouse_download(
     payload: schemas.WarehouseBatchRequest,
@@ -10652,15 +11708,28 @@ def get_market_category_trends(
     tenant_id = _current_tenant_id(request)
     normalized_scope = str(root_scope or "current").strip().lower()
     normalized_period = _normalize_market_period(period)
-    if normalized_scope == "all":
-        return _fetch_seller_market_all_roots_from_browser(normalized_period, tenant_id=tenant_id)
-
     path_ids = [_safe_int(part, 0) for part in path.split("/") if str(part).strip()]
-    return _fetch_seller_market_category_trends_from_browser(
-        path_ids,
-        normalized_period,
-        tenant_id=tenant_id,
-    )
+    try:
+        if normalized_scope == "all":
+            return _fetch_seller_market_all_roots_from_browser(
+                normalized_period, tenant_id=tenant_id
+            )
+
+        return _fetch_seller_market_category_trends_from_browser(
+            path_ids,
+            normalized_period,
+            tenant_id=tenant_id,
+        )
+    except HTTPException as exc:
+        detail = str(exc.detail or "")
+        if "Chrome" in detail or CHROME_DEVTOOLS_BASE in detail:
+            return _empty_seller_market_category_trends(
+                root_scope=normalized_scope,
+                period=normalized_period,
+                path_ids=path_ids,
+                unavailable_reason=detail,
+            )
+        raise
 
 
 @app.get(f"{settings.API_V1_STR}/commissions")
@@ -11028,6 +12097,154 @@ def _activity_local_product_lookup(
     return lookup
 
 
+def _resolve_activity_local_product(
+    row: Dict[str, Any],
+    detail: Dict[str, Any],
+    local_product_lookup: Dict[str, models.Product],
+) -> Optional[models.Product]:
+    offer_id = _first_non_empty(detail.get("offer_id"), row.get("offer_id"))
+    sku = _first_non_empty(detail.get("sku"), row.get("sku"), offer_id)
+    for key in _product_lookup_keys(offer_id, sku):
+        product = local_product_lookup.get(key)
+        if product is not None:
+            return product
+    return None
+
+
+def _apply_activity_membership_snapshot(
+    db: Session,
+    *,
+    store_id: int,
+    memberships: Dict[int, set[str]],
+    synced_at: datetime,
+    full_refresh: bool,
+) -> int:
+    updated = 0
+    rows = db.query(models.Product).filter(models.Product.store_id == store_id).all()
+    for product in rows:
+        titles = sorted(memberships.get(product.id, set()))
+        if full_refresh:
+            product.activity_sync_state = "YES" if titles else "NO"
+            product.activity_sync_actions = json.dumps(titles, ensure_ascii=False)
+        elif titles:
+            product.activity_sync_state = "YES"
+            product.activity_sync_actions = json.dumps(titles, ensure_ascii=False)
+        product.activity_synced_at = synced_at
+        updated += 1
+    return updated
+
+
+async def _sync_store_activity_membership(
+    db: Session,
+    store: models.Store,
+    *,
+    full_refresh: bool = True,
+    actions_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if actions_result is None:
+        actions_result = await get_actions(store.client_id, store.api_key)
+    actions_result = _normalize_actions_result(actions_result)
+    if not actions_result.get("ok"):
+        return {
+            "ok": False,
+            "store_id": store.id,
+            "store_name": store.store_name,
+            "error": actions_result.get("error") or "load_actions_failed",
+            "synced_products": 0,
+            "matched_products": 0,
+            "actions": 0,
+        }
+
+    actions = actions_result.get("data", {}).get("result") or []
+    if not isinstance(actions, list):
+        actions = []
+    actions_result["store_id"] = store.id
+    _activity_cache_set(
+        _ACTIVITY_QUERY_CACHE,
+        _activity_query_cache_key("actions", store.tenant_id, store.id, {}),
+        actions_result,
+        _ACTIVITY_ACTIONS_CACHE_TTL_SECONDS,
+    )
+    store.activity_actions_cache = json.dumps(actions, ensure_ascii=False)
+    store.activity_actions_synced_at = datetime.now(timezone.utc)
+
+    local_lookup: Dict[str, models.Product] = {}
+    for product in db.query(models.Product).filter(models.Product.store_id == store.id).all():
+        for key in _product_lookup_keys(product.offer_id, product.sku):
+            local_lookup[key] = product
+    tenant_id = store.tenant_id
+    memberships: Dict[int, set[str]] = {}
+    errors: List[str] = []
+
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = _safe_int(action.get("id"), 0)
+        if action_id <= 0:
+            continue
+        action_title = str(_first_non_empty(action.get("title"), f"activity-{action_id}") or f"activity-{action_id}")
+        limit = 100
+        offset = 0
+        seen_offsets: set[int] = set()
+        while True:
+            if offset in seen_offsets:
+                break
+            seen_offsets.add(offset)
+            payload = {"action_id": action_id, "limit": limit, "offset": offset}
+            result = await get_participating_products(store.client_id, store.api_key, payload)
+            if not result.get("ok"):
+                errors.append(
+                    f"action:{action_id}:{str(result.get('error') or 'load_participating_failed')}"
+                )
+                break
+            rows, total = _extract_activity_products(result)
+            if not rows:
+                break
+            product_ids = [
+                product_id
+                for product_id in (_activity_product_id(row) for row in rows)
+                if product_id
+            ]
+            details_by_product_id = await _fetch_activity_product_details(
+                store.client_id,
+                store.api_key,
+                product_ids,
+                tenant_id=tenant_id,
+                store_id=store.id,
+            )
+            for row in rows:
+                product_id = _activity_product_id(row)
+                detail = details_by_product_id.get(product_id or 0, {})
+                product = _resolve_activity_local_product(row, detail, local_lookup)
+                if product is None:
+                    continue
+                current = memberships.setdefault(product.id, set())
+                current.add(action_title)
+            offset += len(rows)
+            if (total > 0 and offset >= total) or len(rows) < limit:
+                break
+
+    synced_at = datetime.now(timezone.utc)
+    synced_products = _apply_activity_membership_snapshot(
+        db,
+        store_id=store.id,
+        memberships=memberships,
+        synced_at=synced_at,
+        full_refresh=full_refresh,
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "store_id": store.id,
+        "store_name": store.store_name,
+        "synced_products": synced_products,
+        "matched_products": len(memberships),
+        "actions": len([item for item in actions if isinstance(item, dict)]),
+        "errors": errors,
+        "synced_at": _format_datetime(synced_at),
+    }
+
+
 def _activity_row_image(
     detail: Dict[str, Any],
     row: Dict[str, Any],
@@ -11193,18 +12410,40 @@ async def _load_cached_activity_products_result(
 async def api_get_actions(
     request: Request,
     store_id: Optional[int] = Query(default=None),
+    force_refresh: bool = Query(default=False),
+    sync_products: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     username = _current_username(request)
-    client_id, api_key, resolved_store_id = _resolve_store_credentials(
-        db, store_id, username=username
-    )
+    store = _resolve_store(db, store_id, username=username)
+    client_id, api_key, resolved_store_id = store.client_id, store.api_key, store.id
     tenant_id = _store_tenant_id(db, resolved_store_id)
     cache_key = _activity_query_cache_key("actions", tenant_id, resolved_store_id, {})
-    cached_result = _activity_cache_get(_ACTIVITY_QUERY_CACHE, cache_key)
-    if cached_result is not None:
-        cached_result["store_id"] = resolved_store_id
-        return cached_result
+    if not force_refresh:
+        cached_result = _activity_cache_get(_ACTIVITY_QUERY_CACHE, cache_key)
+        if cached_result is not None:
+            cached_result["store_id"] = resolved_store_id
+            return cached_result
+        cached_actions = _parse_cached_activity_action_rows(store.activity_actions_cache)
+        cached_synced_at = _as_utc(store.activity_actions_synced_at)
+        if (
+            cached_actions
+            and cached_synced_at is not None
+            and (datetime.now(timezone.utc) - cached_synced_at).total_seconds()
+            <= _ACTIVITY_ACTIONS_CACHE_TTL_SECONDS
+        ):
+            cached_payload = {
+                "ok": True,
+                "store_id": resolved_store_id,
+                "data": {"result": cached_actions},
+            }
+            _activity_cache_set(
+                _ACTIVITY_QUERY_CACHE,
+                cache_key,
+                cached_payload,
+                _ACTIVITY_ACTIONS_CACHE_TTL_SECONDS,
+            )
+            return cached_payload
 
     result = await get_actions(client_id, api_key)
     result["store_id"] = resolved_store_id
@@ -11214,8 +12453,19 @@ async def api_get_actions(
             _ACTIVITY_QUERY_CACHE,
             cache_key,
             normalized_result,
-            _ACTIVITY_QUERY_CACHE_TTL_SECONDS,
+            _ACTIVITY_ACTIONS_CACHE_TTL_SECONDS,
         )
+        if sync_products:
+            try:
+                await _sync_store_activity_membership(
+                    db,
+                    store,
+                    full_refresh=True,
+                    actions_result=normalized_result,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
     return normalized_result
 
 

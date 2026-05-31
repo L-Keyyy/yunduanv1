@@ -5,6 +5,7 @@ const STORE_STORAGE_KEY = "ozon-operation-bot-store-id";
 const DOM_UPLOAD_FLOW_KEY = "ozon-operation-bot-dom-upload-flow";
 const DEFAULT_MIN_FOLLOW_PRICE_RATIO = 0.95;
 const DEFAULT_OLD_PRICE_RATIO = 1.75;
+const BATCH_UPLOAD_CONCURRENCY = 3;
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
@@ -1626,8 +1627,15 @@ export function initOperationBot(h) {
     try {
       const currentProductId = extractProductIdFromUrl(location.href);
       let currentProductDataPromise = null;
+      let cursor = 0;
 
       async function extractUploadData(item) {
+        if (typeof h.fetchOzonProductDataById === "function") {
+          try {
+            return await h.fetchOzonProductDataById(item.productId, item.productUrl);
+          } catch (_error) {}
+        }
+
         if (
           Number(item.productId) === Number(currentProductId) &&
           typeof h.extractCurrentProductDataForUpload === "function"
@@ -1637,78 +1645,71 @@ export function initOperationBot(h) {
           }
           return currentProductDataPromise;
         }
+
         return h.extractProductDataFromUrl(item.productUrl);
       }
 
-      for (const item of queue) {
-        const followPrice = formatInputPrice(item.followPrice);
-        const minFollowPrice = formatInputPrice(item.minFollowPrice);
-        const model = normalizeModel(item.model) || buildRandomModel(item.productId);
-
-        if (!followPrice) {
-          patchItem(item.productId, {
-            uploadState: "error",
-            uploadMessage: "请填写跟卖价格"
-          });
-          continue;
-        }
-
-        if (minFollowPrice && Number(minFollowPrice) > Number(followPrice)) {
-          patchItem(item.productId, {
-            uploadState: "error",
-            uploadMessage: "最低价不能高于跟卖价"
-          });
-          continue;
-        }
-
-        patchItem(
-          item.productId,
-          {
-            followPrice,
-            minFollowPrice,
-            model,
-            uploadState: "running",
-            uploadMessage: "正在上传到 SaaS..."
-          },
-          true
-        );
-
-        try {
-          const scrapedJson = await extractUploadData(item);
-          const response = await h.sendMessage({
-            type: "upload-scraped-product",
-            scrapedJson,
-            storeId: state.selectedStoreId,
-            followPrice,
-            minPrice: minFollowPrice || null,
-            oldPrice: buildDefaultOldPrice(followPrice) || null,
-            model
-          });
-
-          if (!response?.ok) {
-            throw new Error(response?.error || "铺货失败");
+      async function runNext() {
+        while (cursor < validQueue.length) {
+          const currentIndex = cursor;
+          cursor += 1;
+          const item = validQueue[currentIndex];
+          if (!item) {
+            continue;
           }
 
-          const uploadStatusText = String(
-            response?.status || response?.hdUpload?.status || ""
-          ).toLowerCase();
-          const isPendingUpload = Boolean(response?.pending) || uploadStatusText !== "uploaded";
+          patchItem(
+            item.productId,
+            {
+              followPrice: item.followPrice,
+              minFollowPrice: item.minFollowPrice,
+              model: item.model,
+              uploadState: "running",
+              uploadMessage: "正在上传到 SaaS..."
+            },
+            true
+          );
 
-          patchItem(item.productId, {
-            uploadState: "done",
-            uploadMessage: isPendingUpload ? "已提交云端，处理中" : "已完成",
-            uploadTaskId: text(
-              response?.hdUpload?.ozonTaskId || response?.job?.result?.hdUpload?.ozonTaskId || "",
-              ""
-            )
-          });
-        } catch (error) {
-          patchItem(item.productId, {
-            uploadState: "error",
-            uploadMessage: error instanceof Error ? error.message : String(error)
-          });
+          try {
+            const scrapedJson = await extractUploadData(item);
+            const response = await h.sendMessage({
+              type: "upload-scraped-product",
+              scrapedJson,
+              storeId: state.selectedStoreId,
+              followPrice: item.followPrice,
+              minPrice: item.minFollowPrice || null,
+              oldPrice: buildDefaultOldPrice(item.followPrice) || null,
+              model: item.model
+            });
+
+            if (!response?.ok) {
+              throw new Error(response?.error || "铺货失败");
+            }
+
+            const uploadStatusText = String(
+              response?.status || response?.hdUpload?.status || ""
+            ).toLowerCase();
+            const isPendingUpload = Boolean(response?.pending) || uploadStatusText !== "uploaded";
+
+            patchItem(item.productId, {
+              uploadState: "done",
+              uploadMessage: isPendingUpload ? "已提交云端，处理中" : "已完成",
+              uploadTaskId: text(
+                response?.hdUpload?.ozonTaskId || response?.job?.result?.hdUpload?.ozonTaskId || "",
+                ""
+              )
+            });
+          } catch (error) {
+            patchItem(item.productId, {
+              uploadState: "error",
+              uploadMessage: error instanceof Error ? error.message : String(error)
+            });
+          }
         }
       }
+
+      const workerCount = Math.max(1, Math.min(BATCH_UPLOAD_CONCURRENCY, validQueue.length));
+      await Promise.all(Array.from({ length: workerCount }, () => runNext()));
     } finally {
       state.uploading = false;
       renderPanel();

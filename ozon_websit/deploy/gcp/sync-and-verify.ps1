@@ -1,7 +1,7 @@
 param(
-    [string]$HostName = "15.134.99.199",
-    [string]$RemoteUser = "ec2-user",
-    [string]$KeyPath = "D:\ozon\first_ssh.pem",
+    [string]$HostName = "YOUR_GCP_EXTERNAL_IP",
+    [string]$RemoteUser = "YOUR_GCP_SSH_USER",
+    [string]$KeyPath = "D:\path\to\gcp-ssh-key",
     [string]$ProjectRoot = "D:\ozon\ozon_websit",
     [string]$BindAddress = "",
     [switch]$SkipBuild,
@@ -196,7 +196,7 @@ if ($BindAddress -and $BindAddress.Trim()) {
 
 $backendRoot = Join-Path $ProjectRoot "backend"
 $frontendRoot = Join-Path $ProjectRoot "frontend"
-$deployRoot = Join-Path $ProjectRoot "deploy\ec2"
+$deployRoot = Join-Path $ProjectRoot "deploy\gcp"
 $frontendDist = Join-Path $frontendRoot "dist"
 
 foreach ($requiredPath in @($backendRoot, $frontendRoot, $deployRoot)) {
@@ -253,8 +253,8 @@ try {
         "."
     )
 
-    $remoteBase = "/home/$RemoteUser"
-    $remoteStaging = "$remoteBase/deploy_staging/$timestamp"
+    $remoteBase = "/tmp/ozon-deploy-staging"
+    $remoteStaging = "$remoteBase/$timestamp"
     $remoteTarget = "$RemoteUser@$HostName"
 
     Write-Step "Preparing remote staging directory"
@@ -273,38 +273,49 @@ try {
 set -euo pipefail
 
 TIMESTAMP="$1"
-REMOTE_ROOT="$HOME"
-STAGING_ROOT="${REMOTE_ROOT}/deploy_staging/${TIMESTAMP}"
-BACKUP_ROOT="${REMOTE_ROOT}/backups/deploy_${TIMESTAMP}"
-LIVE_BACKEND="${REMOTE_ROOT}/ozon_backend"
-LIVE_FRONTEND="${REMOTE_ROOT}/ozon_frontend_dist"
-LIVE_DEPLOY="${REMOTE_ROOT}/ozon_deploy"
+REMOTE_ROOT="/opt/ozon"
+STAGING_ROOT="/tmp/ozon-deploy-staging/${TIMESTAMP}"
+BACKUP_ROOT="/tmp/ozon-deploy-backups/deploy_${TIMESTAMP}"
+LIVE_BACKEND="${REMOTE_ROOT}/backend"
+LIVE_FRONTEND="${REMOTE_ROOT}/frontend_dist"
+LIVE_DEPLOY="${REMOTE_ROOT}/deploy"
 NEW_BACKEND="${STAGING_ROOT}/backend_release"
 NEW_FRONTEND="${STAGING_ROOT}/frontend_release"
 NEW_DEPLOY="${STAGING_ROOT}/deploy_release"
 SWAPPED=0
 
+ensure_runtime_user() {
+  if ! id ozon >/dev/null 2>&1; then
+    sudo useradd --system --create-home --shell /bin/bash ozon
+  fi
+}
+
 rollback() {
   status=$?
   if [ "${SWAPPED}" = "1" ]; then
     echo "deployment failed, restoring previous release" >&2
-    rm -rf "${LIVE_BACKEND}" "${LIVE_FRONTEND}" "${LIVE_DEPLOY}"
-    if [ -d "${BACKUP_ROOT}/ozon_backend" ]; then mv "${BACKUP_ROOT}/ozon_backend" "${LIVE_BACKEND}"; fi
-    if [ -d "${BACKUP_ROOT}/ozon_frontend_dist" ]; then mv "${BACKUP_ROOT}/ozon_frontend_dist" "${LIVE_FRONTEND}"; fi
-    if [ -d "${BACKUP_ROOT}/ozon_deploy" ]; then mv "${BACKUP_ROOT}/ozon_deploy" "${LIVE_DEPLOY}"; fi
+    sudo rm -rf "${LIVE_BACKEND}" "${LIVE_FRONTEND}" "${LIVE_DEPLOY}"
+    if [ -d "${BACKUP_ROOT}/backend" ]; then sudo mv "${BACKUP_ROOT}/backend" "${LIVE_BACKEND}"; fi
+    if [ -d "${BACKUP_ROOT}/frontend_dist" ]; then sudo mv "${BACKUP_ROOT}/frontend_dist" "${LIVE_FRONTEND}"; fi
+    if [ -d "${BACKUP_ROOT}/deploy" ]; then sudo mv "${BACKUP_ROOT}/deploy" "${LIVE_DEPLOY}"; fi
     python3 - <<'PY'
 from pathlib import Path
+base = Path("/opt/ozon")
 for path in (
-    Path("/home/ec2-user/ozon_deploy/bootstrap-remote.sh"),
-    Path("/home/ec2-user/ozon_backend/start-api.sh"),
-    Path("/home/ec2-user/ozon_backend/start-worker.sh"),
-    Path("/home/ec2-user/ozon_backend/start-beat.sh"),
+    base / "deploy/bootstrap-remote.sh",
+    base / "backend/start-api.sh",
+    base / "backend/start-worker.sh",
+    base / "backend/start-beat.sh",
 ):
     if path.exists():
         path.write_text(path.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8")
 PY
-    chmod +x "${LIVE_DEPLOY}/bootstrap-remote.sh" "${LIVE_BACKEND}/start-api.sh" "${LIVE_BACKEND}/start-worker.sh" "${LIVE_BACKEND}/start-beat.sh" || true
-    bash "${LIVE_DEPLOY}/bootstrap-remote.sh" || true
+    ensure_runtime_user || true
+    sudo chown -R ozon:ozon "${REMOTE_ROOT}" || true
+    if [ -f "${LIVE_DEPLOY}/bootstrap-remote.sh" ] && [ -f "${LIVE_BACKEND}/start-api.sh" ]; then
+      sudo chmod +x "${LIVE_DEPLOY}/bootstrap-remote.sh" "${LIVE_BACKEND}/start-api.sh" "${LIVE_BACKEND}/start-worker.sh" "${LIVE_BACKEND}/start-beat.sh" || true
+      sudo bash "${LIVE_DEPLOY}/bootstrap-remote.sh" || true
+    fi
   fi
   exit "${status}"
 }
@@ -319,38 +330,43 @@ mv "${STAGING_ROOT}/backend" "${NEW_BACKEND}/app"
 
 sudo systemctl stop ozon-beat ozon-upload-worker ozon-browser-worker ozon-chrome ozon-worker ozon-backend || true
 
-if [ -d "${LIVE_BACKEND}" ]; then mv "${LIVE_BACKEND}" "${BACKUP_ROOT}/ozon_backend"; fi
-if [ -d "${LIVE_FRONTEND}" ]; then mv "${LIVE_FRONTEND}" "${BACKUP_ROOT}/ozon_frontend_dist"; fi
-if [ -d "${LIVE_DEPLOY}" ]; then mv "${LIVE_DEPLOY}" "${BACKUP_ROOT}/ozon_deploy"; fi
+ensure_runtime_user
+sudo mkdir -p "${REMOTE_ROOT}"
+sudo chown -R "${USER}:${USER}" "${REMOTE_ROOT}"
+
+if [ -d "${LIVE_BACKEND}" ]; then mv "${LIVE_BACKEND}" "${BACKUP_ROOT}/backend"; fi
+if [ -d "${LIVE_FRONTEND}" ]; then mv "${LIVE_FRONTEND}" "${BACKUP_ROOT}/frontend_dist"; fi
+if [ -d "${LIVE_DEPLOY}" ]; then mv "${LIVE_DEPLOY}" "${BACKUP_ROOT}/deploy"; fi
 
 mv "${NEW_BACKEND}/app" "${LIVE_BACKEND}"
 mv "${NEW_FRONTEND}" "${LIVE_FRONTEND}"
 mv "${NEW_DEPLOY}" "${LIVE_DEPLOY}"
 SWAPPED=1
 
-if [ -f "${BACKUP_ROOT}/ozon_backend/.env" ]; then
-  cp -a "${BACKUP_ROOT}/ozon_backend/.env" "${LIVE_BACKEND}/.env"
+if [ -f "${BACKUP_ROOT}/backend/.env" ]; then
+  cp -a "${BACKUP_ROOT}/backend/.env" "${LIVE_BACKEND}/.env"
 fi
 
-if [ -d "${BACKUP_ROOT}/ozon_backend/cache" ]; then
-  cp -a "${BACKUP_ROOT}/ozon_backend/cache" "${LIVE_BACKEND}/cache"
+if [ -d "${BACKUP_ROOT}/backend/cache" ]; then
+  cp -a "${BACKUP_ROOT}/backend/cache" "${LIVE_BACKEND}/cache"
 fi
 
 python3 - <<'PY'
 from pathlib import Path
+base = Path("/opt/ozon")
 for path in (
-    Path("/home/ec2-user/ozon_deploy/bootstrap-remote.sh"),
-    Path("/home/ec2-user/ozon_backend/start-api.sh"),
-    Path("/home/ec2-user/ozon_backend/start-worker.sh"),
-    Path("/home/ec2-user/ozon_backend/start-beat.sh"),
+    base / "deploy/bootstrap-remote.sh",
+    base / "backend/start-api.sh",
+    base / "backend/start-worker.sh",
+    base / "backend/start-beat.sh",
 ):
     if path.exists():
         path.write_text(path.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8")
 PY
 
-chmod +x "${LIVE_DEPLOY}/bootstrap-remote.sh" "${LIVE_BACKEND}/start-api.sh" "${LIVE_BACKEND}/start-worker.sh" "${LIVE_BACKEND}/start-beat.sh"
-bash -n "${LIVE_DEPLOY}/bootstrap-remote.sh"
-bash "${LIVE_DEPLOY}/bootstrap-remote.sh"
+sudo chmod +x "${LIVE_DEPLOY}/bootstrap-remote.sh" "${LIVE_BACKEND}/start-api.sh" "${LIVE_BACKEND}/start-worker.sh" "${LIVE_BACKEND}/start-beat.sh"
+sudo bash -n "${LIVE_DEPLOY}/bootstrap-remote.sh"
+sudo bash "${LIVE_DEPLOY}/bootstrap-remote.sh"
 
 trap - ERR
 rm -rf "${STAGING_ROOT}"
@@ -384,7 +400,7 @@ echo "remote deploy complete"
         Invoke-CheckedWithRetry -FilePath $sshPath -Arguments @(
             $sshOptions +
             $remoteTarget,
-            "set -e; sudo systemctl is-active ozon-backend ozon-worker ozon-upload-worker ozon-beat nginx; if sudo systemctl is-active --quiet ozon-browser-worker || sudo systemctl is-active --quiet ozon-chrome; then exit 11; fi; echo '---'; curl -fsS http://127.0.0.1:8000/healthz; echo; echo '---'; curl -fsS http://127.0.0.1:8000/api/v1/health; echo; echo '---'; curl -sS -o /tmp/register-check.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/api/v1/auth/register; echo; cat /tmp/register-check.out; echo"
+            'set -e; sudo systemctl is-active ozon-backend ozon-worker ozon-upload-worker ozon-beat nginx; if sudo systemctl is-active --quiet ozon-browser-worker || sudo systemctl is-active --quiet ozon-chrome; then exit 11; fi; echo "---"; i=0; until curl -fsS http://127.0.0.1:8000/healthz >/tmp/healthz.out; do i=$((i + 1)); if [ "$i" -ge 60 ]; then cat /tmp/healthz.out 2>/dev/null || true; exit 12; fi; sleep 2; done; cat /tmp/healthz.out; echo; echo "---"; curl -fsS http://127.0.0.1:8000/api/v1/health; echo; echo "---"; code=$(curl -sS -o /tmp/register-check.out -w %{http_code} -X POST -H Content-Type:application/json -d {} http://127.0.0.1:8000/api/v1/auth/register); echo $code; cat /tmp/register-check.out; echo; test x$code = x422'
         )
 
         Write-Step "Checking public SPA route"

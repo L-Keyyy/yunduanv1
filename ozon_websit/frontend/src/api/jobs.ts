@@ -1,4 +1,7 @@
 import apiClient from './client'
+import { markStoreDataDirty } from './store'
+import { markInventoryDataDirty, markProductDataDirty } from './products'
+import { markOrderDataDirty } from './orders'
 
 export type AsyncTaskStatus =
   | 'PENDING'
@@ -42,6 +45,9 @@ export const submitVerifyStoresJob = async (payload: StoreScopedTaskRequest = {}
 
 export const submitSyncProductsJob = async (payload: StoreScopedTaskRequest = {}) => {
   const response = await apiClient.post('/jobs/sync-products', payload)
+  markStoreDataDirty()
+  markProductDataDirty()
+  markInventoryDataDirty()
   return response.data as AsyncTaskSubmitResponse
 }
 
@@ -50,13 +56,12 @@ export const submitSyncOrdersJob = async (payload: OrderSyncTaskRequest = {}) =>
   return response.data as AsyncTaskSubmitResponse
 }
 
-export const submitSyncBrowserWarehousesJob = async (storeId: number) => {
-  const response = await apiClient.post('/jobs/sync-browser-warehouses', { store_id: storeId })
-  return response.data as AsyncTaskSubmitResponse
-}
-
 export const submitSyncCoreJob = async (payload: OrderSyncTaskRequest = {}) => {
   const response = await apiClient.post('/jobs/sync-core', payload)
+  markStoreDataDirty()
+  markProductDataDirty()
+  markInventoryDataDirty()
+  markOrderDataDirty()
   return response.data as AsyncTaskSubmitResponse
 }
 

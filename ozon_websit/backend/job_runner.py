@@ -6,10 +6,10 @@ from typing import Any, Dict
 
 from tasks import (
     run_due_schedules,
-    run_sync_browser_warehouses,
     run_sync_core,
     run_sync_orders,
     run_sync_products,
+    run_sync_warehouses,
     run_sync_schedule,
     run_verify_stores,
 )
@@ -36,9 +36,9 @@ def main() -> int:
     orders_parser.add_argument("--tenant-id", type=int, default=None)
     orders_parser.add_argument("--days", type=int, default=30)
 
-    browser_warehouse_parser = subparsers.add_parser("sync-browser-warehouses")
-    browser_warehouse_parser.add_argument("--store-id", type=int, required=True)
-    browser_warehouse_parser.add_argument("--tenant-id", type=int, default=None)
+    warehouse_parser = subparsers.add_parser("sync-warehouses")
+    warehouse_parser.add_argument("--store-id", type=int, required=True)
+    warehouse_parser.add_argument("--tenant-id", type=int, default=None)
 
     core_parser = subparsers.add_parser("sync-core")
     core_parser.add_argument("--tenant-id", type=int, default=None)
@@ -65,9 +65,9 @@ def main() -> int:
                 tenant_id=args.tenant_id,
             )
         )
-    elif args.command == "sync-browser-warehouses":
+    elif args.command == "sync-warehouses":
         _print_result(
-            run_sync_browser_warehouses(
+            run_sync_warehouses(
                 store_id=args.store_id,
                 tenant_id=args.tenant_id,
             )

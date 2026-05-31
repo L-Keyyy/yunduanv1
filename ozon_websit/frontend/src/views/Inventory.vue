@@ -9,15 +9,28 @@
         <span class="label">搜索</span>
         <el-input v-model="searchQuery.sku" placeholder="SKU" clearable class="input-item" />
         <el-select v-model="searchQuery.storeId" placeholder="全部店铺" class="select-item" clearable>
+          <el-option label="全部店铺" :value="0" />
           <el-option v-for="store in stores" :key="store.id" :label="store.store_name" :value="store.id" />
         </el-select>
-        <el-select v-model="searchQuery.warehouseName" placeholder="全部仓库" class="select-item" clearable filterable>
+        <el-select
+          v-model="searchQuery.warehouseName"
+          placeholder="全部仓库"
+          class="select-item warehouse-select"
+          clearable
+          filterable
+        >
+          <el-option label="全部仓库" value="" />
           <el-option
             v-for="option in warehouseOptions"
             :key="option.value"
             :label="option.label"
             :value="option.value"
           />
+        </el-select>
+        <el-select v-model="searchQuery.stockState" placeholder="库存状态" class="select-item">
+          <el-option label="全部库存" value="" />
+          <el-option label="无库存商品" value="no_stock" />
+          <el-option label="有库存商品" value="in_stock" />
         </el-select>
         <el-select v-model="searchQuery.backupStatus" placeholder="备份状态" class="select-item">
           <el-option label="全部" value="" />
@@ -29,7 +42,7 @@
           <el-option label="已归档" value="archived" />
           <el-option label="全部" value="" />
         </el-select>
-        <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="handleSearch(true)">刷新</el-button>
         <el-button :icon="RefreshRight" @click="handleReset">重置</el-button>
       </div>
 
@@ -44,7 +57,9 @@
           >
             同步 Ozon 仓库
           </el-button>
-          <el-button type="primary" @click="handleBatchStock">修改库存</el-button>
+          <el-button type="primary" size="large" class="select-products-btn" @click="handleBatchStock">
+            修改库存
+          </el-button>
           <el-button @click="handleBackup">备份库存</el-button>
           <el-button @click="handleRestore">恢复库存</el-button>
           <el-button @click="handleAutoRestock">自动补货</el-button>
@@ -108,7 +123,13 @@
             {{ row.scheduled_shelf || '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column prop="status" label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="getProductStatusTagType(row.status)">
+              {{ getProductStatusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
@@ -119,20 +140,20 @@
         :page-sizes="[15, 30, 50, 100]"
         layout="sizes, total, prev, pager, next, jumper"
         :total="total"
-        @size-change="handleSearch"
-        @current-change="handleSearch"
+        @size-change="handlePageChange"
+        @current-change="handlePageChange"
       />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshRight, Search } from '@element-plus/icons-vue'
-import { submitSyncBrowserWarehousesJob } from '../api/jobs'
-import { fetchStores } from '../api/store'
+import { fetchStores, syncStoreWarehouses } from '../api/store'
 import { getSellerProductSearchUrl } from '../utils/ozon'
+import { getProductStatusLabel, getProductStatusTagType } from '../utils/productStatus'
 import {
   batchBackupInventory,
   batchRestoreInventory,
@@ -140,7 +161,6 @@ import {
   batchUpdateInventoryStock,
   fetchInventory,
 } from '../api/products'
-import { useAsyncJob } from '../composables/useAsyncJob'
 
 type StoreItem = {
   id: number
@@ -170,13 +190,13 @@ const total = ref(0)
 const stores = ref<StoreItem[]>([])
 const tableData = ref<InventoryRow[]>([])
 const selectedRows = ref<InventoryRow[]>([])
-const warehouseSyncJob = useAsyncJob()
-const { running: warehouseTaskRunning } = warehouseSyncJob
-const syncingSellerWarehouses = computed(() => warehouseTaskRunning.value)
+const syncingSellerWarehouses = ref(false)
+let hasCompletedInitialLoad = false
 
 const searchQuery = ref({
   sku: '',
   warehouseName: '',
+  stockState: '',
   backupStatus: '',
   archiveStatus: 'unarchived',
   storeId: undefined as number | undefined,
@@ -228,30 +248,42 @@ const loadStores = async () => {
 const buildInventoryParams = () => ({
   sku: searchQuery.value.sku || undefined,
   warehouse_name: searchQuery.value.warehouseName || undefined,
+  stock_state: searchQuery.value.stockState || undefined,
   backup_status: searchQuery.value.backupStatus || undefined,
   archive_status: searchQuery.value.archiveStatus,
-  store_id: searchQuery.value.storeId,
+  store_id: searchQuery.value.storeId || undefined,
   page: currentPage.value,
   page_size: pageSize.value,
 })
 
-const handleSearch = async () => {
-  loading.value = true
+const handleSearch = async (forceRefresh = false, options: { background?: boolean } = {}) => {
+  const shouldForceRefresh = forceRefresh === true
+  const showLoading = !options.background && (shouldForceRefresh || tableData.value.length === 0)
+  if (showLoading) {
+    loading.value = true
+  }
   try {
-    const data = await fetchInventory(buildInventoryParams())
+    const data = await fetchInventory(buildInventoryParams(), { forceRefresh: shouldForceRefresh })
     tableData.value = data.result || []
     total.value = data.total || 0
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '查询库存失败')
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
+}
+
+const handlePageChange = () => {
+  void handleSearch()
 }
 
 const handleReset = () => {
   searchQuery.value = {
     sku: '',
     warehouseName: '',
+    stockState: '',
     backupStatus: '',
     archiveStatus: 'unarchived',
     storeId: undefined,
@@ -288,9 +320,10 @@ const ensureStockWarehouse = (rows: InventoryRow[] = []) => {
 const buildFilteredInventoryPayload = () => ({
   sku: searchQuery.value.sku || undefined,
   warehouse_name: searchQuery.value.warehouseName || undefined,
+  stock_state: searchQuery.value.stockState || undefined,
   backup_status: searchQuery.value.backupStatus || undefined,
   archive_status: searchQuery.value.archiveStatus,
-  store_id: searchQuery.value.storeId,
+  store_id: searchQuery.value.storeId || undefined,
 })
 
 const chooseBatchStockScope = async () => {
@@ -357,17 +390,17 @@ const handleSyncSellerWarehouses = async () => {
     ElMessage.warning('请先选择店铺，再同步 Ozon 仓库')
     return
   }
-
-  await warehouseSyncJob.runJob(
-    () => submitSyncBrowserWarehousesJob(searchQuery.value.storeId as number),
-    {
-      successMessage: '仓库同步完成',
-      onSuccess: async () => {
-        await loadStores()
-        await handleSearch()
-      },
-    }
-  )
+  syncingSellerWarehouses.value = true
+  try {
+    const response = await syncStoreWarehouses(searchQuery.value.storeId as number)
+    ElMessage.success(response?.message || '仓库同步完成')
+    await loadStores()
+    await handleSearch()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '同步仓库失败')
+  } finally {
+    syncingSellerWarehouses.value = false
+  }
 }
 
 const handleBackup = async () => {
@@ -420,6 +453,17 @@ watch(
 onMounted(async () => {
   await loadStores()
   await handleSearch()
+  hasCompletedInitialLoad = true
+})
+
+onActivated(async () => {
+  if (!hasCompletedInitialLoad) {
+    return
+  }
+  if (!tableData.value.length) {
+    await loadStores()
+    await handleSearch()
+  }
 })
 </script>
 
@@ -453,10 +497,19 @@ onMounted(async () => {
   width: 180px;
 }
 
+.warehouse-select {
+  width: 150px;
+}
+
 .batch-buttons {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.select-products-btn {
+  min-width: 132px;
+  font-weight: 650;
 }
 
 .sku-link {

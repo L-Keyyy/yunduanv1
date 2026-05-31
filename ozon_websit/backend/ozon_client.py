@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ozon_http import request_ozon_api
 
@@ -78,6 +78,21 @@ async def get_upload_task_info(
         api_key,
         payload={"task_id": int(task_id)},
         timeout=30.0,
+    )
+
+
+async def get_fbs_package_label(
+    client_id: str, api_key: str, posting_numbers: Sequence[str]
+) -> Dict[str, Any]:
+    return await request_ozon_api(
+        method="POST",
+        endpoint="/v2/posting/fbs/package-label",
+        client_id=client_id,
+        api_key=api_key,
+        payload={"posting_number": list(posting_numbers)},
+        timeout=60.0,
+        accept="application/pdf",
+        response_format="binary",
     )
 
 
@@ -221,6 +236,47 @@ async def get_products_info_list(
     return await _request(
         "POST",
         "/v3/product/info/list",
+        client_id,
+        api_key,
+        payload=payload,
+        timeout=30.0,
+    )
+
+
+async def list_warehouses(client_id: str, api_key: str) -> Dict[str, Any]:
+    return await _request(
+        "POST",
+        "/v2/warehouse/list",
+        client_id,
+        api_key,
+        payload={},
+        timeout=20.0,
+    )
+
+
+async def get_product_stocks_by_warehouse_fbs(
+    client_id: str,
+    api_key: str,
+    *,
+    skus: Optional[Sequence[str]] = None,
+    offer_ids: Optional[Sequence[str]] = None,
+    limit: int = 1000,
+    cursor: str = "",
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "limit": max(1, min(int(limit or 1000), 1000)),
+    }
+    if cursor:
+        payload["cursor"] = cursor
+    if skus:
+        payload["sku"] = [str(sku).strip() for sku in skus if str(sku).strip()]
+    elif offer_ids:
+        payload["offer_id"] = [
+            str(offer_id).strip() for offer_id in offer_ids if str(offer_id).strip()
+        ]
+    return await _request(
+        "POST",
+        "/v2/product/info/stocks-by-warehouse/fbs",
         client_id,
         api_key,
         payload=payload,

@@ -12,7 +12,7 @@ module.exports = {
 
   // ========== Cloud upload bridge ==========
   CLOUD_UPLOAD_ENABLED: process.env.OZON_CLOUD_UPLOAD_ENABLED !== '0',
-  CLOUD_API_BASE: process.env.OZON_CLOUD_API_BASE || 'http://52.63.119.7/api/v1',
+  CLOUD_API_BASE: process.env.OZON_CLOUD_API_BASE || 'http://35.209.87.105/api/v1',
   CLOUD_DEFAULT_STORE_ID: process.env.OZON_CLOUD_DEFAULT_STORE_ID || '',
   CLOUD_DEFAULT_STORE_NAME: process.env.OZON_CLOUD_DEFAULT_STORE_NAME || '',
   CLOUD_REQUEST_TIMEOUT_MS: Number(process.env.OZON_CLOUD_REQUEST_TIMEOUT_MS || 15000),

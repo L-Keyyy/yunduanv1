@@ -104,7 +104,15 @@
 
       <el-main>
         <router-view v-slot="{ Component, route: currentRoute }">
+          <KeepAlive>
+            <component
+              v-if="currentRoute.meta.keepAlive"
+              :is="Component"
+              :key="routeComponentKey(currentRoute)"
+            />
+          </KeepAlive>
           <component
+            v-if="!currentRoute.meta.keepAlive"
             :is="Component"
             :key="routeComponentKey(currentRoute)"
           />

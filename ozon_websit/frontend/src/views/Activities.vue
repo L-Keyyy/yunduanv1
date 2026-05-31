@@ -20,7 +20,7 @@
             :value="store.id"
           />
         </el-select>
-        <el-button type="primary" :loading="loadingActions" @click="loadActions">刷新活动列表</el-button>
+        <el-button type="primary" :loading="loadingActions" @click="loadActions(true)">刷新活动列表</el-button>
       </div>
 
       <div class="summary-strip">
@@ -329,7 +329,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchStores } from '../api/store'
 import {
@@ -338,9 +338,13 @@ import {
   getCandidates,
   getParticipating,
 } from '../api/activities'
+import { getAuthUser } from '../utils/auth'
 
 type LoadScope = 'selected' | 'all'
 type AddModeFilter = 'all' | 'auto' | 'manual' | 'unset'
+
+const ACTIVITIES_AUTO_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000
+const ACTIVITIES_AUTO_REFRESH_AT_PREFIX = 'ozon_activities_auto_refresh_at:v1:'
 
 interface ActivityAction {
   id: number
@@ -393,6 +397,7 @@ const participatingScope = ref<LoadScope>('selected')
 const busyRowKeys = ref<string[]>([])
 const selectedParticipatingRows = ref<ActivityProduct[]>([])
 const participatingTableRef = ref<{ clearSelection?: () => void } | null>(null)
+let hasCompletedInitialLoad = false
 
 const candidateFilters = reactive<FilterState>({
   addMode: 'all',
@@ -408,6 +413,37 @@ const currentStoreName = computed(() => {
   const currentStore = stores.value.find((store) => store.id === selectedStoreId.value)
   return currentStore?.store_name || '-'
 })
+
+const resolveActivitiesOwnerKey = () => {
+  const username = (getAuthUser()?.username || 'anonymous').trim().toLowerCase()
+  return username || 'anonymous'
+}
+
+const resolveActivitiesAutoRefreshKey = (storeId: number) =>
+  `${ACTIVITIES_AUTO_REFRESH_AT_PREFIX}${resolveActivitiesOwnerKey()}:${storeId}`
+
+const readActivitiesLastAutoRefreshAt = (storeId: number) => {
+  if (typeof window === 'undefined') return 0
+  try {
+    const raw = localStorage.getItem(resolveActivitiesAutoRefreshKey(storeId))
+    const numeric = Number(raw || 0)
+    return Number.isFinite(numeric) ? numeric : 0
+  } catch {
+    return 0
+  }
+}
+
+const markActivitiesAutoRefreshed = (storeId: number) => {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(resolveActivitiesAutoRefreshKey(storeId), String(Date.now()))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+const shouldAutoRefreshActivitiesOnTabOpen = (storeId: number) =>
+  Date.now() - readActivitiesLastAutoRefreshAt(storeId) >= ACTIVITIES_AUTO_REFRESH_INTERVAL_MS
 
 const ensureOk = (resp: any, fallbackMessage: string) => {
   if (!resp?.ok) {
@@ -540,16 +576,27 @@ const loadStores = async () => {
   }
 }
 
-const loadActions = async () => {
+const loadActions = async (forceRefresh = false, options: { background?: boolean } = {}) => {
   if (!selectedStoreId.value) {
     ElMessage.warning('请先选择店铺')
     return
   }
 
-  loadingActions.value = true
-  resetProductTables()
+  const showLoading = !options.background && (forceRefresh || actions.value.length === 0)
+  if (showLoading) {
+    loadingActions.value = true
+  }
+  if (!options.background) {
+    resetProductTables()
+  }
   try {
-    const resp = await getActions(selectedStoreId.value)
+    const resp = await getActions(selectedStoreId.value, {
+      forceRefresh,
+      syncProducts: forceRefresh,
+    })
+    if (forceRefresh && selectedStoreId.value) {
+      markActivitiesAutoRefreshed(selectedStoreId.value)
+    }
     ensureOk(resp, '活动列表加载失败')
     actions.value = extractActions(resp)
 
@@ -562,11 +609,15 @@ const loadActions = async () => {
     const currentActionExists = actions.value.some((action) => action.id === selectedActionId.value)
     selectedActionId.value = currentActionExists ? selectedActionId.value : actions.value[0].id
   } catch (error: any) {
-    actions.value = []
-    selectedActionId.value = undefined
+    if (!options.background) {
+      actions.value = []
+      selectedActionId.value = undefined
+    }
     ElMessage.error(error.message || '活动列表加载失败')
   } finally {
-    loadingActions.value = false
+    if (showLoading) {
+      loadingActions.value = false
+    }
   }
 }
 
@@ -916,12 +967,35 @@ const handleBatchRemoveLowPrice = async () => {
 }
 
 const handleStoreChange = async () => {
-  await loadActions()
+  actions.value = []
+  await loadActions(false)
 }
 
 onMounted(async () => {
   await loadStores()
-  await loadActions()
+  const initialStoreId = selectedStoreId.value
+  if (initialStoreId) {
+    await loadActions(shouldAutoRefreshActivitiesOnTabOpen(initialStoreId))
+  }
+  hasCompletedInitialLoad = true
+})
+
+onActivated(async () => {
+  if (!hasCompletedInitialLoad) {
+    return
+  }
+  if (!selectedStoreId.value) {
+    await loadStores()
+  }
+  const currentStoreId = selectedStoreId.value
+  if (!currentStoreId) return
+  if (!actions.value.length) {
+    await loadActions(shouldAutoRefreshActivitiesOnTabOpen(currentStoreId))
+    return
+  }
+  if (shouldAutoRefreshActivitiesOnTabOpen(currentStoreId)) {
+    void loadActions(true, { background: true })
+  }
 })
 </script>
 
