@@ -53,6 +53,14 @@
       <el-header class="header">
         <div class="header-left"></div>
         <div class="header-right">
+          <el-button
+            type="primary"
+            plain
+            class="recharge-button"
+            @click="rechargeDialogVisible = true"
+          >
+            充值
+          </el-button>
           <el-popover placement="bottom" title="预警通知" :width="300" trigger="click">
             <template #reference>
               <el-badge
@@ -118,6 +126,32 @@
           />
         </router-view>
       </el-main>
+
+      <el-dialog
+        v-model="rechargeDialogVisible"
+        title="会员充值"
+        width="760px"
+      >
+        <div class="membership-plan-grid">
+          <div
+            v-for="plan in membershipPlans"
+            :key="plan.code"
+            class="membership-plan-card"
+          >
+            <div class="membership-plan-name">{{ plan.name }}</div>
+            <div class="membership-plan-price">
+              <span class="membership-plan-currency">¥</span>{{ plan.monthlyPrice }}
+              <span class="membership-plan-unit">/月</span>
+            </div>
+            <div class="membership-plan-divider"></div>
+            <ul class="membership-plan-features">
+              <li class="membership-plan-feature-blank"></li>
+              <li class="membership-plan-feature-blank"></li>
+              <li class="membership-plan-feature-blank"></li>
+            </ul>
+          </div>
+        </div>
+      </el-dialog>
     </el-container>
   </el-container>
 </template>
@@ -140,6 +174,12 @@ const route = useRoute()
 const alerts = ref<any[]>([])
 const usernameLabel = ref(getAuthUsername() || '未登录')
 let pollInterval: number | null = null
+const rechargeDialogVisible = ref(false)
+const membershipPlans = [
+  { code: 'starter', name: '套餐一', monthlyPrice: 129 },
+  { code: 'growth', name: '套餐二', monthlyPrice: 239 },
+  { code: 'pro', name: '套餐三', monthlyPrice: 369 },
+]
 
 const isPublicRoute = computed(() => Boolean(route.meta.public))
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
@@ -265,6 +305,10 @@ const logout = async () => {
   gap: var(--space-4);
 }
 
+.recharge-button {
+  padding: 8px 14px;
+}
+
 .notification-badge {
   margin-top: 4px;
 }
@@ -308,5 +352,64 @@ const logout = async () => {
 
 .el-main {
   padding: var(--space-5);
+}
+
+.membership-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.membership-plan-card {
+  border: 1px solid var(--c-border-1);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--c-surface-1);
+}
+
+.membership-plan-name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--c-text-1);
+}
+
+.membership-plan-price {
+  margin-top: 8px;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--c-brand);
+  line-height: 1;
+}
+
+.membership-plan-currency {
+  font-size: 18px;
+  margin-right: 2px;
+}
+
+.membership-plan-unit {
+  font-size: var(--font-size-sm);
+  color: var(--c-text-2);
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.membership-plan-divider {
+  margin: 12px 0;
+  border-top: 1px solid var(--c-border-1);
+}
+
+.membership-plan-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.membership-plan-feature-blank {
+  height: 16px;
+  border-radius: 4px;
+  border: 1px dashed var(--c-border-1);
+  background: var(--c-surface-2);
 }
 </style>
