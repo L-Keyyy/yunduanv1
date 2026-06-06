@@ -1,0 +1,15 @@
+[Unit]
+Description=Ozon Backend API
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/ozon_backend
+EnvironmentFile=/home/ec2-user/ozon_backend/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/sh /home/ec2-user/ozon_backend/start-api.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

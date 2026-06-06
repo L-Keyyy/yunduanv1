@@ -1,0 +1,19 @@
+[Unit]
+Description=Ozon Celery Worker - Sync Queue
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/ozon_backend
+EnvironmentFile=/home/ec2-user/ozon_backend/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=CELERY_WORKER_NAME=sync
+Environment=CELERY_QUEUES=default,sync
+Environment=CELERY_CONCURRENCY=1
+ExecStart=/bin/sh /home/ec2-user/ozon_backend/start-worker.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

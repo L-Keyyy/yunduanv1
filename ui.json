@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电商产品数据看板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', 'Microsoft YaHei', sans-serif; background-color: #f3f4f6; }
+        .data-card { transition: all 0.3s ease; }
+        .data-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex justify-center">
+
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden data-card border border-gray-100">
+        <!-- Header: Product Info -->
+        <div class="bg-gray-50 p-5 border-b border-gray-100">
+            <div class="flex justify-between items-start mb-3">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800">2063292269</h2>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded">Ridberg</span>
+                        <span class="text-gray-500 text-xs text-nowrap truncate max-w-[150px]">Haberdashery & Accessories</span>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button class="p-2 text-gray-400 hover:text-blue-600 transition-colors"><i class="fa-regular fa-copy"></i></button>
+                    <button class="p-2 text-gray-400 hover:text-blue-600 transition-colors"><i class="fa-solid fa-gear"></i></button>
+                </div>
+            </div>
+            
+            <div class="flex items-center justify-between mt-4">
+                <div class="flex items-center gap-1 text-yellow-500">
+                    <i class="fa-solid fa-star text-sm"></i>
+                    <span class="font-bold text-gray-800">4.9</span>
+                    <span class="text-gray-400 text-xs font-normal">(7868 评论)</span>
+                </div>
+                <div class="text-xs text-gray-400">更新于: 2026-04-12</div>
+            </div>
+        </div>
+
+        <!-- Section 1: Sales Metrics -->
+        <div class="p-5">
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">销售表现</h3>
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+                    <p class="text-xs text-blue-600 mb-1">月销售额</p>
+                    <p class="text-lg font-bold text-gray-800">35,870.95<span class="text-sm ml-0.5">₽</span></p>
+                </div>
+                <div class="bg-orange-50/50 p-3 rounded-xl border border-orange-100">
+                    <p class="text-xs text-orange-600 mb-1">月销量</p>
+                    <div class="flex items-end gap-2">
+                        <span class="text-lg font-bold text-gray-800">7</span>
+                        <span class="text-xs text-red-500 font-medium mb-1"><i class="fa-solid fa-arrow-down mr-0.5"></i>65%</span>
+                    </div>
+                </div>
+                <div class="p-3">
+                    <p class="text-xs text-gray-400 mb-1">每日销额</p>
+                    <p class="text-sm font-semibold text-gray-700">1,281.10 ₽</p>
+                </div>
+                <div class="p-3">
+                    <p class="text-xs text-gray-400 mb-1">日均销量</p>
+                    <p class="text-sm font-semibold text-gray-700">0.25</p>
+                </div>
+            </div>
+
+            <!-- Section 2: Funnel & Conversion -->
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">流量与转化</h3>
+            <div class="space-y-3 mb-6">
+                <div class="flex justify-between items-center text-sm">
+                    <span class="text-gray-500">展示总量 / 搜索量</span>
+                    <span class="font-semibold text-gray-700">75,390 / 13,223</span>
+                </div>
+                <div class="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden flex">
+                    <div class="bg-blue-500 h-full" style="width: 17%"></div>
+                    <div class="bg-gray-200 h-full" style="width: 83%"></div>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="text-center">
+                        <p class="text-[10px] text-gray-400 mb-1">点击率 (CTR)</p>
+                        <p class="text-sm font-bold text-gray-700">3.94%</p>
+                    </div>
+                    <div class="text-center border-x border-gray-100">
+                        <p class="text-[10px] text-gray-400 mb-1">搜索转化</p>
+                        <p class="text-sm font-bold text-gray-700">0.07%</p>
+                    </div>
+                    <div class="text-center">
+                        <p class="text-[10px] text-gray-400 mb-1">促销转化</p>
+                        <p class="text-sm font-bold text-green-600">41.59%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 3: Logistics & Price -->
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">物流与价格</h3>
+            <div class="grid grid-cols-2 gap-y-3 gap-x-6 text-sm mb-6">
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">配送方式</span>
+                    <span class="font-bold text-indigo-600">FBO</span>
+                </div>
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">退货率</span>
+                    <span class="font-bold text-gray-700">0.00%</span>
+                </div>
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">平均价格</span>
+                    <span class="font-bold text-gray-700">5,124 ₽</span>
+                </div>
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">最低跟卖价</span>
+                    <span class="font-bold text-red-500">4,426 ₽</span>
+                </div>
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">上架时长</span>
+                    <span class="font-bold text-gray-700 text-xs">354天 (2025-04-23)</span>
+                </div>
+                <div class="flex justify-between border-b border-gray-50 pb-1">
+                    <span class="text-gray-500">运输时间</span>
+                    <span class="font-bold text-gray-700">1.167 天</span>
+                </div>
+            </div>
+
+            <!-- Section 4: Campaigns -->
+            <div class="bg-gray-50 rounded-xl p-3 mb-6">
+                <div class="flex justify-between items-center text-xs mb-2">
+                    <span class="text-gray-500 italic"><i class="fa-solid fa-bullhorn mr-1"></i> 营销活动参与度</span>
+                    <span class="text-blue-600 font-semibold">42% (12/28天)</span>
+                </div>
+                <div class="w-full bg-white h-2 rounded-full border border-gray-100">
+                    <div class="bg-blue-400 h-full rounded-full" style="width: 42%"></div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="grid grid-cols-3 gap-3">
+                <button class="bg-orange-500 hover:bg-orange-600 text-white py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-orange-200 transition-all active:scale-95">
+                    1688 货源
+                </button>
+                <button class="bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-red-200 transition-all active:scale-95">
+                    强制跟卖
+                </button>
+                <button class="bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-200 transition-all active:scale-95">
+                    采集数据
+                </button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

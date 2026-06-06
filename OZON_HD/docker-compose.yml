@@ -1,0 +1,57 @@
+# 此代码为刻度航宇编写，复制与逆向属于违法行为。不允许解析我的代码
+version: "3.8"
+
+services:
+  # ========== 后端 API + Worker ==========
+  api:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET:-ozon-saas-jwt-production-key}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-ozon-saas-encryption-production}
+      - REDIS_URL=redis://redis:6379
+      - DB_PATH=/app/server/data/ozon_saas.db
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+    volumes:
+      - db_data:/app/server/data
+      - images_data:/app/images
+      - cache_data:/app/cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ========== Redis (队列 + 缓存) ==========
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ========== Nginx (前端 + 反向代理) ==========
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./website:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  redis_data:
+  images_data:
+  cache_data:

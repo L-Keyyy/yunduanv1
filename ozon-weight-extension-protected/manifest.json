@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Ozon Weight MVP",
+  "version": "0.1.0",
+  "description": "Get package weight from the Ozon checkout flow for the current product.",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "cookies",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://35.209.87.105/*",
+    "https://seller.ozon.ru/*",
+    "https://www.ozon.ru/*",
+    "https://ozon.ru/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ozon Weight MVP"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://seller.ozon.ru/*",
+        "https://www.ozon.ru/*",
+        "https://ozon.ru/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "ui.json",
+        "operation_bot.js",
+        "CN.jpg",
+        "RU.png"
+      ],
+      "matches": [
+        "https://seller.ozon.ru/*",
+        "https://www.ozon.ru/*",
+        "https://ozon.ru/*"
+      ]
+    }
+  ]
+}

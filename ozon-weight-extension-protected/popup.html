@@ -1,0 +1,104 @@
+<!doctype html>
+<!-- 此代码为刻度航宇编写，复制与逆向属于违法行为。不允许解析我的代码 -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Ozon Product Tools</title>
+    <style>
+      body {
+        width: 340px;
+        margin: 0;
+        padding: 16px;
+        font: 14px/1.45 "Segoe UI", Arial, sans-serif;
+        color: #1f2937;
+        background: #f7f9fc;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+
+      p {
+        margin: 0 0 10px;
+      }
+
+      button {
+        width: 100%;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 10px;
+        background: #2563eb;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+
+      button.secondary {
+        margin-top: 8px;
+        background: #e5e7eb;
+        color: #111827;
+      }
+
+      button.success {
+        margin-top: 8px;
+        background: #0f766e;
+      }
+
+      .card {
+        margin-top: 12px;
+        padding: 12px;
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+
+      .label {
+        color: #6b7280;
+        font-size: 12px;
+      }
+
+      .value {
+        margin-top: 4px;
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+
+      .ok {
+        color: #0f766e;
+      }
+
+      .warn {
+        color: #b45309;
+      }
+
+      .err {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Ozon Product Tools</h1>
+    <p>One-click extraction merges product-page data and package weight, then keeps the result in extension state.</p>
+    <button id="extractAllBtn" class="success">One-Click Extract All</button>
+    <button id="weightBtn">Get Package Weight Only</button>
+    <button id="clearBtn" class="secondary">Clear Current State</button>
+
+    <div class="card">
+      <div class="label">Status</div>
+      <div id="status" class="value">Idle</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Result</div>
+      <div id="result" class="value">No result yet.</div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

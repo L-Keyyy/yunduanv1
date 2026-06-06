@@ -1,0 +1,1657 @@
+<!DOCTYPE html>
+<!-- 此代码为刻度航宇编写，复制与逆向属于违法行为。不允许解析我的代码 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OZON SaaS 控制台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --line: #dce5f0;
+      --line-strong: #bfd1e4;
+      --text: #142033;
+      --muted: #61758a;
+      --blue: #2563eb;
+      --blue-soft: #e9f0ff;
+      --green: #1f9d63;
+      --red: #e05454;
+      --orange: #e88b2d;
+      --shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+      --radius: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 32%),
+        radial-gradient(circle at right top, rgba(14, 165, 233, 0.12), transparent 26%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .auth-shell {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px 16px;
+    }
+
+    .auth-card {
+      width: min(440px, 100%);
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid rgba(220, 229, 240, 0.9);
+      box-shadow: var(--shadow);
+      border-radius: 28px;
+      padding: 32px;
+      backdrop-filter: blur(20px);
+    }
+
+    .auth-title {
+      margin: 0 0 8px;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+
+    .auth-subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .tabs {
+      display: inline-grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      padding: 6px;
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      margin-bottom: 20px;
+      width: 100%;
+    }
+
+    .tabs button,
+    .nav-btn,
+    .ghost-btn,
+    .primary-btn,
+    .danger-btn,
+    .secondary-btn,
+    .plan-btn {
+      border: 0;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .tabs button {
+      height: 42px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .tabs button.active {
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    .form-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      height: 46px;
+      padding: 0 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--text);
+      outline: none;
+    }
+
+    .field input:focus,
+    .field select:focus {
+      border-color: #8cb3ff;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+    }
+
+    .field-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .field-row input {
+      flex: 1;
+    }
+
+    .field-hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .primary-btn,
+    .secondary-btn,
+    .danger-btn,
+    .ghost-btn,
+    .plan-btn {
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 14px;
+      font-weight: 600;
+    }
+
+    .primary-btn {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      box-shadow: 0 12px 28px rgba(37, 99, 235, 0.24);
+    }
+
+    .secondary-btn,
+    .ghost-btn {
+      background: var(--panel-soft);
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .danger-btn {
+      background: #fff0f0;
+      color: #b63131;
+      border: 1px solid #f6caca;
+    }
+
+    .plan-btn {
+      width: 100%;
+      background: var(--text);
+      color: #ffffff;
+    }
+
+    .tabs button:hover,
+    .nav-btn:hover,
+    .ghost-btn:hover,
+    .primary-btn:hover,
+    .secondary-btn:hover,
+    .danger-btn:hover,
+    .plan-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .notice {
+      border-radius: 16px;
+      padding: 12px 14px;
+      font-size: 14px;
+      line-height: 1.55;
+      border: 1px solid transparent;
+    }
+
+    .notice.info {
+      background: #f0f6ff;
+      border-color: #d7e6ff;
+      color: #244984;
+    }
+
+    .notice.success {
+      background: #ecfbf4;
+      border-color: #c8efd8;
+      color: #15643f;
+    }
+
+    .notice.error {
+      background: #fff1f1;
+      border-color: #f4caca;
+      color: #9c2f2f;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      padding: 26px 20px;
+      background: rgba(255, 255, 255, 0.9);
+      border-right: 1px solid rgba(220, 229, 240, 0.92);
+      backdrop-filter: blur(18px);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .brand {
+      display: grid;
+      gap: 6px;
+    }
+
+    .brand-badge {
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #2563eb, #0ea5e9);
+      color: #ffffff;
+      font-size: 22px;
+      font-weight: 800;
+      box-shadow: 0 16px 30px rgba(37, 99, 235, 0.25);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -0.03em;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .user-chip {
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .user-chip strong {
+      font-size: 15px;
+    }
+
+    .user-chip span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .nav-btn {
+      min-height: 46px;
+      padding: 0 14px;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font-weight: 600;
+    }
+
+    .nav-btn.active {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .sidebar-foot {
+      display: grid;
+      gap: 12px;
+    }
+
+    .sidebar-foot .secondary-btn {
+      width: 100%;
+    }
+
+    .main {
+      padding: 28px;
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .topbar h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.03em;
+    }
+
+    .topbar p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .topbar-meta {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .page {
+      display: none;
+      gap: 18px;
+    }
+
+    .page.active {
+      display: grid;
+    }
+
+    .grid-4,
+    .grid-3,
+    .grid-2 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(220, 229, 240, 0.92);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .card h3,
+    .card h4 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .card-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      margin: -6px 0 0;
+    }
+
+    .metric-card {
+      gap: 10px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .metric-value {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-foot {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left,
+    .toolbar-right {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid #eef2f7;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      background: #fbfdff;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .status-pill,
+    .plan-pill,
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-ready,
+    .tag-green {
+      background: #ecfbf4;
+      color: #15643f;
+    }
+
+    .status-cleaning,
+    .status-uploading,
+    .tag-blue {
+      background: #eef4ff;
+      color: #2758af;
+    }
+
+    .status-draft,
+    .tag-muted {
+      background: #eef2f7;
+      color: #516172;
+    }
+
+    .status-failed,
+    .tag-red {
+      background: #fff1f1;
+      color: #b63636;
+    }
+
+    .status-uploaded {
+      background: #f3f0ff;
+      color: #6246c8;
+    }
+
+    .store-list,
+    .device-list,
+    .plan-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .store-item,
+    .device-item,
+    .plan-item,
+    .summary-list {
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .split {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .empty {
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: 18px;
+      padding: 18px;
+      background: #fcfdff;
+    }
+
+    .key-box {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(14, 165, 233, 0.05));
+    }
+
+    .key-value {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      word-break: break-all;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #17325f;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(191, 209, 228, 0.9);
+    }
+
+    .token-banner {
+      padding: 16px;
+      border-radius: 18px;
+      background: #fff8e8;
+      border: 1px solid #f1dfac;
+      display: grid;
+      gap: 10px;
+    }
+
+    .token-banner strong {
+      font-size: 15px;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1200px) {
+      .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 980px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+        height: auto;
+        grid-template-rows: auto;
+      }
+
+      .grid-3,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      .main {
+        padding: 18px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .auth-card {
+        padding: 24px;
+      }
+
+      .form-grid,
+      .grid-4 {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="authShell" class="auth-shell">
+    <div class="auth-card">
+      <h1 class="auth-title">OZON SaaS 控制台</h1>
+      <p class="auth-subtitle">先完成本地账号登录，再让扩展和本地服务把结构化商品同步到云端。</p>
+      <div class="tabs">
+        <button id="loginTab" type="button" class="active">登录</button>
+        <button id="registerTab" type="button">注册</button>
+      </div>
+      <form id="authForm" class="form-stack">
+        <div id="displayNameField" class="field hidden">
+          <label for="displayNameInput">显示名称</label>
+          <input id="displayNameInput" type="text" placeholder="例如：运营主管A" maxlength="80" />
+        </div>
+        <div class="field">
+          <label for="emailInput">邮箱</label>
+          <input id="emailInput" type="email" placeholder="name@example.com" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label for="passwordInput">密码</label>
+          <input id="passwordInput" type="password" placeholder="至少 6 位" autocomplete="current-password" />
+        </div>
+        <div id="authMessage" class="notice info hidden"></div>
+        <button id="authSubmitBtn" type="submit" class="primary-btn">登录</button>
+      </form>
+      <p class="footer-note">登录成功后会在本地保存 `ozon_token` 和 `ozon_api_key`，扩展可以直接复用。</p>
+    </div>
+  </div>
+
+  <div id="appShell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">OZ</div>
+        <div>
+          <h1>OZON HD</h1>
+          <p>本地采集、本地清洗、云端记录与一键上货。</p>
+        </div>
+      </div>
+
+      <div class="user-chip">
+        <strong id="sidebarUserName">-</strong>
+        <span id="sidebarUserMeta">-</span>
+      </div>
+
+      <nav class="nav-list">
+        <button type="button" class="nav-btn active" data-page="dashboard">概览</button>
+        <button type="button" class="nav-btn" data-page="products">采集商品</button>
+        <button type="button" class="nav-btn" data-page="stores">店铺管理</button>
+        <button type="button" class="nav-btn" data-page="subscription">套餐额度</button>
+        <button type="button" class="nav-btn" data-page="account">账号设置</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="footer-note">本地扩展和本地服务只需要读这里保存的 API Key 或设备令牌。</div>
+        <button id="logoutBtn" type="button" class="secondary-btn">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="pageTitle">概览</h2>
+          <p id="pageDescription">查看当前用户、店铺、商品和上传额度。</p>
+        </div>
+        <div class="topbar-meta">
+          <div id="topbarPlan">套餐：-</div>
+          <div id="topbarTime">最近刷新：-</div>
+        </div>
+      </header>
+
+      <div id="appMessage" class="notice info hidden"></div>
+
+      <section id="page-dashboard" class="page active">
+        <div id="dashboardMetrics" class="grid-4"></div>
+        <div class="grid-2">
+          <article class="card">
+            <h3>当前账号</h3>
+            <p class="card-subtitle">账号资料和套餐摘要。</p>
+            <div id="dashboardUserSummary" class="summary-list stack"></div>
+          </article>
+          <article class="card">
+            <h3>快捷操作</h3>
+            <p class="card-subtitle">把常用动作收在一页内。</p>
+            <div class="stack">
+              <button type="button" class="primary-btn" data-jump-page="stores">绑定店铺</button>
+              <button type="button" class="secondary-btn" data-jump-page="products">查看已采集商品</button>
+              <button type="button" class="secondary-btn" data-jump-page="account">生成设备令牌</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-products" class="page">
+        <article class="card">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button type="button" class="secondary-btn" onclick="loadProducts(1)">刷新商品</button>
+              <button type="button" class="secondary-btn" onclick="toggleAll()">全选本页</button>
+              <span id="selectedSummary" class="muted">已选择 0 个商品</span>
+            </div>
+            <div class="toolbar-right">
+              <select id="productUploadStoreSelect">
+                <option value="">默认店铺</option>
+              </select>
+              <button type="button" class="primary-btn" onclick="uploadSelected()">一键上货</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 52px;"><input id="selectAllCheckbox" type="checkbox" /></th>
+                  <th>商品</th>
+                  <th>状态</th>
+                  <th>价格</th>
+                  <th>图片数</th>
+                  <th>更新时间</th>
+                </tr>
+              </thead>
+              <tbody id="productsTableBody"></tbody>
+            </table>
+          </div>
+          <div class="toolbar">
+            <div class="muted" id="productsPaginationText">第 1 页</div>
+            <div class="toolbar-right">
+              <button id="productsPrevBtn" type="button" class="secondary-btn" onclick="loadProducts(window.__ozonState.productsPage - 1)">上一页</button>
+              <button id="productsNextBtn" type="button" class="secondary-btn" onclick="loadProducts(window.__ozonState.productsPage + 1)">下一页</button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section id="page-stores" class="page">
+        <div class="grid-2">
+          <article class="card">
+            <h3>新增店铺</h3>
+            <p class="card-subtitle">保存云端上传所需的 Ozon 店铺凭证。</p>
+            <form id="storeForm" class="form-stack">
+              <div class="field">
+                <label for="storeNameInput">店铺名称</label>
+                <input id="storeNameInput" type="text" placeholder="例如：女装一店" />
+              </div>
+              <div class="field">
+                <label for="storeClientIdInput">Ozon Client ID</label>
+                <input id="storeClientIdInput" type="text" placeholder="输入 Client ID" />
+              </div>
+              <div class="field">
+                <label for="storeApiKeyInput">Ozon API Key</label>
+                <input id="storeApiKeyInput" type="text" placeholder="输入 API Key" />
+              </div>
+              <div class="field">
+                <label for="cloudStoreIdInput">云端 Store ID</label>
+                <input id="cloudStoreIdInput" type="number" placeholder="可选，用于和云端店铺映射" />
+              </div>
+              <button type="submit" class="primary-btn">保存店铺</button>
+            </form>
+          </article>
+          <article class="card">
+            <h3>已绑定店铺</h3>
+            <p class="card-subtitle">这里的店铺会成为一键上货的目标。</p>
+            <div id="storesList" class="store-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-subscription" class="page">
+        <div class="grid-2">
+          <article class="card">
+            <h3>当前套餐</h3>
+            <p class="card-subtitle">上传额度按月累计统计。</p>
+            <div id="subscriptionSummary" class="summary-list stack"></div>
+          </article>
+          <article class="card">
+            <h3>升级说明</h3>
+            <p class="card-subtitle">先把套餐和额度做通，支付通道可以后补。</p>
+            <div class="empty">当前支持手动升级：点击任意套餐按钮后填写支付流水号，留空也可以完成模拟升级。</div>
+          </article>
+        </div>
+        <div id="plansList" class="grid-3"></div>
+      </section>
+
+      <section id="page-account" class="page">
+        <div class="grid-2">
+          <article class="card">
+            <h3>个人资料</h3>
+            <p class="card-subtitle">邮箱作为主标识，显示名称用于后台展示。</p>
+            <form id="profileForm" class="form-stack">
+              <div class="field">
+                <label for="profileEmailInput">邮箱</label>
+                <input id="profileEmailInput" type="email" disabled />
+              </div>
+              <div class="field">
+                <label for="profileDisplayNameInput">显示名称</label>
+                <input id="profileDisplayNameInput" type="text" maxlength="80" />
+              </div>
+              <div class="field-hint" id="profileMetaText">-</div>
+              <button type="submit" class="primary-btn">保存资料</button>
+            </form>
+          </article>
+          <article class="card">
+            <h3>修改密码</h3>
+            <p class="card-subtitle">修改后当前登录态保持不变。</p>
+            <form id="passwordForm" class="form-stack">
+              <div class="field">
+                <label for="currentPasswordInput">当前密码</label>
+                <input id="currentPasswordInput" type="password" autocomplete="current-password" />
+              </div>
+              <div class="field">
+                <label for="newPasswordInput">新密码</label>
+                <input id="newPasswordInput" type="password" autocomplete="new-password" />
+              </div>
+              <button type="submit" class="primary-btn">更新密码</button>
+            </form>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3>API Key</h3>
+            <p class="card-subtitle">本地扩展和本地服务可以直接读取这里保存的 key。</p>
+            <div class="key-box stack">
+              <div id="apiKeyValue" class="key-value">-</div>
+              <div class="toolbar-left">
+                <button type="button" class="secondary-btn" onclick="copyApiKey()">复制 API Key</button>
+                <button type="button" class="danger-btn" onclick="regenerateApiKeyAction()">重新生成</button>
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <h3>设备令牌</h3>
+            <p class="card-subtitle">为本地扩展、本地清洗服务签发独立令牌，后续可以按设备撤销。</p>
+            <form id="deviceForm" class="form-stack">
+              <div class="field">
+                <label for="deviceNameInput">设备名称</label>
+                <input id="deviceNameInput" type="text" placeholder="例如：采集机-01" maxlength="80" />
+              </div>
+              <button type="submit" class="primary-btn">生成设备令牌</button>
+            </form>
+            <div id="latestDeviceTokenBox" class="token-banner hidden"></div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>设备列表</h3>
+          <p class="card-subtitle">使用 `Authorization: DeviceKey &lt;token&gt;` 即可调用云端接口。</p>
+          <div id="devicesList" class="device-list"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="/api-client.js"></script>
+  <script>
+    const client = new window.OzonSaasClient();
+    const state = {
+      authMode: 'login',
+      currentPage: 'dashboard',
+      me: null,
+      stores: [],
+      products: [],
+      devices: [],
+      subscription: null,
+      productsPage: 1,
+      productsPages: 1,
+      productsTotal: 0,
+      selectedProductIds: new Set(),
+      latestDeviceToken: '',
+      lastRefreshAt: '',
+    };
+    window.__ozonState = state;
+
+    const pageMeta = {
+      dashboard: { title: '概览', description: '查看当前用户、店铺、商品和上传额度。' },
+      products: { title: '采集商品', description: '查看本地扩展同步到云端的结构化商品，并执行一键上货。' },
+      stores: { title: '店铺管理', description: '绑定 Ozon 店铺凭证，为上传任务提供目标店铺。' },
+      subscription: { title: '套餐额度', description: '控制用户可绑定店铺数和月度上传额度。' },
+      account: { title: '账号设置', description: '管理个人资料、密码、API Key 和设备令牌。' },
+    };
+
+    const planCatalog = [
+      { key: 'free', name: 'Free', price: '¥0 / 月', limit: 5, storeLimit: 1, desc: '适合单店试用。' },
+      { key: 'basic', name: 'Basic', price: '¥99 / 月', limit: 100, storeLimit: 2, desc: '适合小规模上新。' },
+      { key: 'pro', name: 'Pro', price: '¥299 / 月', limit: 500, storeLimit: 5, desc: '适合多店铺并行运营。' },
+      { key: 'enterprise', name: 'Enterprise', price: '¥799 / 月', limit: 99999, storeLimit: 999, desc: '适合团队和大批量上货。' },
+    ];
+
+    const els = {};
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDate(value) {
+      if (!value) {
+        return '--';
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+
+    function setNotice(element, type, message) {
+      if (!element) {
+        return;
+      }
+      if (!message) {
+        element.className = 'notice info hidden';
+        element.textContent = '';
+        return;
+      }
+      element.className = `notice ${type || 'info'}`;
+      element.textContent = message;
+    }
+
+    function setAppMessage(type, message) {
+      setNotice(els.appMessage, type, message);
+    }
+
+    function setAuthMessage(type, message) {
+      setNotice(els.authMessage, type, message);
+    }
+
+    function persistAuth(token, apiKey) {
+      if (token) {
+        localStorage.setItem('ozon_token', token);
+        client.setToken(token);
+      }
+      if (apiKey) {
+        localStorage.setItem('ozon_api_key', apiKey);
+        client.setApiKey(apiKey);
+      }
+    }
+
+    function clearAuth() {
+      localStorage.removeItem('ozon_token');
+      localStorage.removeItem('ozon_api_key');
+      client.setToken(null);
+      client.setApiKey(null);
+    }
+
+    function statusClass(status) {
+      const mapping = {
+        ready: 'status-ready',
+        cleaning: 'status-cleaning',
+        uploading: 'status-uploading',
+        draft: 'status-draft',
+        failed: 'status-failed',
+        uploaded: 'status-uploaded',
+      };
+      return mapping[status] || 'status-draft';
+    }
+
+    function statusLabel(status) {
+      const mapping = {
+        ready: '可上传',
+        cleaning: '清洗中',
+        uploading: '上传中',
+        draft: '草稿',
+        failed: '失败',
+        uploaded: '已上传',
+      };
+      return mapping[status] || (status || '未知');
+    }
+
+    function updateShellAuthState(isAuthed) {
+      els.authShell.classList.toggle('hidden', isAuthed);
+      els.appShell.classList.toggle('hidden', !isAuthed);
+    }
+
+    function switchAuth(mode) {
+      state.authMode = mode === 'register' ? 'register' : 'login';
+      els.loginTab.classList.toggle('active', state.authMode === 'login');
+      els.registerTab.classList.toggle('active', state.authMode === 'register');
+      els.displayNameField.classList.toggle('hidden', state.authMode !== 'register');
+      els.authSubmitBtn.textContent = state.authMode === 'register' ? '注册并进入控制台' : '登录';
+      els.passwordInput.setAttribute('autocomplete', state.authMode === 'register' ? 'new-password' : 'current-password');
+      setAuthMessage('', '');
+    }
+
+    function updateTopbar(page) {
+      const meta = pageMeta[page] || pageMeta.dashboard;
+      els.pageTitle.textContent = meta.title;
+      els.pageDescription.textContent = meta.description;
+      els.topbarPlan.textContent = `套餐：${(state.me?.plan || '-').toUpperCase()}`;
+      els.topbarTime.textContent = `最近刷新：${formatDate(state.lastRefreshAt)}`;
+    }
+
+    function showPage(page) {
+      state.currentPage = pageMeta[page] ? page : 'dashboard';
+      document.querySelectorAll('.nav-btn').forEach((button) => {
+        button.classList.toggle('active', button.dataset.page === state.currentPage);
+      });
+      document.querySelectorAll('.page').forEach((panel) => {
+        panel.classList.toggle('active', panel.id === `page-${state.currentPage}`);
+      });
+      updateTopbar(state.currentPage);
+      if (state.currentPage === 'account') {
+        renderAccount();
+      }
+    }
+
+    function renderSidebar() {
+      els.sidebarUserName.textContent = state.me?.display_name || state.me?.email || '-';
+      els.sidebarUserMeta.textContent = `${state.me?.email || '-'} · ${(state.me?.plan || 'free').toUpperCase()}`;
+    }
+
+    function renderDashboard() {
+      const readyCount = state.products.filter((item) => item.status === 'ready').length;
+      const uploadedCount = state.products.filter((item) => item.status === 'uploaded').length;
+      const failedCount = state.products.filter((item) => item.status === 'failed').length;
+      const remaining = state.subscription?.remaining ?? 0;
+      const metrics = [
+        { label: '已采集商品', value: state.productsTotal, foot: '云端已记录的结构化商品' },
+        { label: '可上传商品', value: readyCount, foot: '当前状态为 ready 的商品' },
+        { label: '已绑定店铺', value: state.stores.length, foot: '作为一键上货目标店铺' },
+        { label: '本月剩余额度', value: remaining, foot: `已用 ${state.subscription?.monthly_upload_count || 0}` },
+      ];
+
+      els.dashboardMetrics.innerHTML = metrics
+        .map((item) => `
+          <article class="card metric-card">
+            <div class="metric-label">${escapeHtml(item.label)}</div>
+            <div class="metric-value">${escapeHtml(item.value)}</div>
+            <div class="metric-foot">${escapeHtml(item.foot)}</div>
+          </article>
+        `)
+        .join('');
+
+      els.dashboardUserSummary.innerHTML = `
+        <div class="split"><span class="muted">显示名称</span><strong>${escapeHtml(state.me?.display_name || '--')}</strong></div>
+        <div class="split"><span class="muted">邮箱</span><strong>${escapeHtml(state.me?.email || '--')}</strong></div>
+        <div class="split"><span class="muted">套餐</span><span class="plan-pill tag-blue">${escapeHtml((state.me?.plan || 'free').toUpperCase())}</span></div>
+        <div class="split"><span class="muted">最近登录</span><strong>${escapeHtml(formatDate(state.me?.last_login_at))}</strong></div>
+        <div class="split"><span class="muted">失败商品</span><strong>${escapeHtml(failedCount)}</strong></div>
+        <div class="split"><span class="muted">已上传商品</span><strong>${escapeHtml(uploadedCount)}</strong></div>
+      `;
+    }
+
+    function renderProducts() {
+      const rows = state.products.map((product) => {
+        const checked = state.selectedProductIds.has(product.id) ? 'checked' : '';
+        return `
+          <tr>
+            <td><input type="checkbox" data-product-checkbox="${escapeHtml(product.id)}" ${checked} /></td>
+            <td>
+              <div><strong>${escapeHtml(product.title || '未命名商品')}</strong></div>
+              <div class="muted">源商品 ID：${escapeHtml(product.source_product_id || '--')}</div>
+            </td>
+            <td><span class="status-pill ${statusClass(product.status)}">${escapeHtml(statusLabel(product.status))}</span></td>
+            <td>${escapeHtml(product.price || '--')}</td>
+            <td>${escapeHtml(product.images_count || 0)}</td>
+            <td>${escapeHtml(formatDate(product.updated_at || product.created_at))}</td>
+          </tr>
+        `;
+      }).join('');
+
+      els.productsTableBody.innerHTML = rows || `
+        <tr>
+          <td colspan="6">
+            <div class="empty">还没有采集到商品。先让本地扩展或本地服务同步一批结构化商品到云端。</div>
+          </td>
+        </tr>
+      `;
+
+      els.productsPaginationText.textContent = `第 ${state.productsPage} / ${Math.max(1, state.productsPages)} 页 · 共 ${state.productsTotal} 个商品`;
+      els.productsPrevBtn.disabled = state.productsPage <= 1;
+      els.productsNextBtn.disabled = state.productsPage >= state.productsPages;
+      els.selectAllCheckbox.checked = state.products.length > 0 && state.products.every((item) => state.selectedProductIds.has(item.id));
+      renderSelectedSummary();
+    }
+
+    function renderSelectedSummary() {
+      els.selectedSummary.textContent = `已选择 ${state.selectedProductIds.size} 个商品`;
+    }
+
+    function renderStoreOptions() {
+      const options = ['<option value="">默认店铺</option>']
+        .concat(
+          state.stores.map((store) => `
+            <option value="${escapeHtml(store.id)}">${escapeHtml(store.store_name)}${store.is_default ? '（默认）' : ''}</option>
+          `)
+        );
+      els.productUploadStoreSelect.innerHTML = options.join('');
+    }
+
+    function renderStores() {
+      renderStoreOptions();
+      if (!state.stores.length) {
+        els.storesList.innerHTML = '<div class="empty">当前还没有绑定店铺。</div>';
+        return;
+      }
+
+      els.storesList.innerHTML = state.stores.map((store) => `
+        <div class="store-item stack">
+          <div class="split">
+            <div>
+              <strong>${escapeHtml(store.store_name)}</strong>
+              <div class="muted">创建时间：${escapeHtml(formatDate(store.created_at))}</div>
+            </div>
+            <div class="toolbar-right">
+              ${store.is_default ? '<span class="tag tag-green">默认店铺</span>' : ''}
+              <button type="button" class="danger-btn" onclick="delStore('${escapeHtml(store.id)}')">删除</button>
+            </div>
+          </div>
+          <div class="muted">云端 Store ID：${escapeHtml(store.cloud_store_id || '--')}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderSubscription() {
+      const sub = state.subscription || {};
+      els.subscriptionSummary.innerHTML = `
+        <div class="split"><span class="muted">当前套餐</span><span class="plan-pill tag-blue">${escapeHtml((sub.plan || 'free').toUpperCase())}</span></div>
+        <div class="split"><span class="muted">月度额度</span><strong>${escapeHtml(sub.monthly_upload_limit || 0)}</strong></div>
+        <div class="split"><span class="muted">已用额度</span><strong>${escapeHtml(sub.monthly_upload_count || 0)}</strong></div>
+        <div class="split"><span class="muted">剩余额度</span><strong>${escapeHtml(sub.remaining || 0)}</strong></div>
+        <div class="split"><span class="muted">到期时间</span><strong>${escapeHtml(formatDate(sub.plan_expires_at))}</strong></div>
+      `;
+
+      els.plansList.innerHTML = planCatalog.map((plan) => `
+        <article class="card plan-item">
+          <div class="split">
+            <h4>${escapeHtml(plan.name)}</h4>
+            ${state.subscription?.plan === plan.key ? '<span class="tag tag-blue">当前</span>' : ''}
+          </div>
+          <div class="metric-value" style="font-size: 24px;">${escapeHtml(plan.price)}</div>
+          <div class="muted">${escapeHtml(plan.desc)}</div>
+          <div class="stack">
+            <div class="split"><span class="muted">月度上传</span><strong>${escapeHtml(plan.limit)}</strong></div>
+            <div class="split"><span class="muted">店铺数上限</span><strong>${escapeHtml(plan.storeLimit)}</strong></div>
+          </div>
+          <button type="button" class="plan-btn" onclick="upgradePlan('${escapeHtml(plan.key)}')">
+            ${state.subscription?.plan === plan.key ? '当前套餐' : '升级到此套餐'}
+          </button>
+        </article>
+      `).join('');
+    }
+
+    function renderAccount() {
+      els.profileEmailInput.value = state.me?.email || '';
+      els.profileDisplayNameInput.value = state.me?.display_name || '';
+      els.profileMetaText.textContent = `创建时间：${formatDate(state.me?.created_at)} · 最近登录：${formatDate(state.me?.last_login_at)}`;
+      els.apiKeyValue.textContent = state.me?.api_key || '--';
+
+      if (state.latestDeviceToken) {
+        els.latestDeviceTokenBox.classList.remove('hidden');
+        els.latestDeviceTokenBox.innerHTML = `
+          <strong>新设备令牌已生成</strong>
+          <div class="key-value">${escapeHtml(state.latestDeviceToken)}</div>
+          <div class="field-hint">这个令牌只会完整显示这一次。后续后台只保留预览和撤销能力。</div>
+        `;
+      } else {
+        els.latestDeviceTokenBox.classList.add('hidden');
+        els.latestDeviceTokenBox.innerHTML = '';
+      }
+
+      if (!state.devices.length) {
+        els.devicesList.innerHTML = '<div class="empty">当前还没有设备令牌。</div>';
+        return;
+      }
+
+      els.devicesList.innerHTML = state.devices.map((device) => `
+        <div class="device-item stack">
+          <div class="split">
+            <div>
+              <strong>${escapeHtml(device.name)}</strong>
+              <div class="muted">预览：${escapeHtml(device.token_preview || '--')}</div>
+            </div>
+            ${device.revoked_at
+              ? '<span class="tag tag-red">已撤销</span>'
+              : `<button type="button" class="danger-btn" onclick="revokeDevice('${escapeHtml(device.id)}')">撤销</button>`}
+          </div>
+          <div class="split">
+            <span class="muted">创建时间：${escapeHtml(formatDate(device.created_at))}</span>
+            <span class="muted">最近使用：${escapeHtml(formatDate(device.last_used_at))}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function refreshMe() {
+      state.me = await client.getMe();
+      renderSidebar();
+    }
+
+    async function refreshStores() {
+      state.stores = await client.getStores();
+      renderStores();
+    }
+
+    async function loadProducts(page = 1) {
+      const targetPage = Math.max(1, Number(page) || 1);
+      const data = await client.getProducts(targetPage, 20);
+      state.productsPage = data.pagination?.page || targetPage;
+      state.productsPages = Math.max(1, data.pagination?.pages || 1);
+      state.productsTotal = data.pagination?.total || 0;
+      state.products = Array.isArray(data.products) ? data.products : [];
+      const visibleIds = new Set(state.products.map((item) => item.id));
+      state.selectedProductIds = new Set(
+        Array.from(state.selectedProductIds).filter((id) => visibleIds.has(id))
+      );
+      renderProducts();
+      renderDashboard();
+    }
+
+    async function refreshSubscription() {
+      state.subscription = await client.getSubscription();
+      renderSubscription();
+      updateTopbar(state.currentPage);
+    }
+
+    async function refreshDevices() {
+      state.devices = await client.getDevices();
+      renderAccount();
+    }
+
+    async function refreshAll() {
+      await refreshMe();
+      await Promise.all([
+        refreshStores(),
+        loadProducts(state.productsPage || 1),
+        refreshSubscription(),
+        refreshDevices(),
+      ]);
+      state.lastRefreshAt = new Date().toISOString();
+      updateTopbar(state.currentPage);
+      renderDashboard();
+      renderAccount();
+    }
+
+    async function doAuth(event) {
+      event.preventDefault();
+      setAuthMessage('info', state.authMode === 'register' ? '正在创建账号...' : '正在登录...');
+      els.authSubmitBtn.disabled = true;
+      try {
+        const email = els.emailInput.value.trim();
+        const password = els.passwordInput.value;
+        let data;
+        if (state.authMode === 'register') {
+          data = await client.register(email, password, els.displayNameInput.value.trim());
+        } else {
+          data = await client.login(email, password);
+        }
+        persistAuth(data.token, data.user?.api_key);
+        state.me = data.user || null;
+        updateShellAuthState(true);
+        await refreshAll();
+        showPage('dashboard');
+        setAppMessage('success', state.authMode === 'register' ? '账号创建成功。' : '登录成功。');
+        els.authForm.reset();
+      } catch (error) {
+        setAuthMessage('error', error.message || '登录失败');
+      } finally {
+        els.authSubmitBtn.disabled = false;
+      }
+    }
+
+    async function bootstrap() {
+      const token = localStorage.getItem('ozon_token');
+      const apiKey = localStorage.getItem('ozon_api_key');
+      if (token) {
+        client.setToken(token);
+      }
+      if (apiKey) {
+        client.setApiKey(apiKey);
+      }
+
+      if (!token && !apiKey) {
+        updateShellAuthState(false);
+        return;
+      }
+
+      try {
+        updateShellAuthState(true);
+        await refreshAll();
+        showPage(state.currentPage);
+      } catch (error) {
+        clearAuth();
+        updateShellAuthState(false);
+        setAuthMessage('error', '登录态已失效，请重新登录。');
+      }
+    }
+
+    async function saveProfile(event) {
+      event.preventDefault();
+      try {
+        const data = await client.updateMe({ display_name: els.profileDisplayNameInput.value.trim() });
+        state.me = data.user || state.me;
+        renderSidebar();
+        renderDashboard();
+        renderAccount();
+        setAppMessage('success', '个人资料已更新。');
+      } catch (error) {
+        setAppMessage('error', error.message || '保存资料失败');
+      }
+    }
+
+    async function changePasswordAction(event) {
+      event.preventDefault();
+      try {
+        await client.changePassword(els.currentPasswordInput.value, els.newPasswordInput.value);
+        els.passwordForm.reset();
+        setAppMessage('success', '密码已更新。');
+      } catch (error) {
+        setAppMessage('error', error.message || '修改密码失败');
+      }
+    }
+
+    async function regenerateApiKeyAction() {
+      if (!window.confirm('重新生成后，旧 API Key 将立即失效。是否继续？')) {
+        return;
+      }
+      try {
+        const data = await client.regenerateApiKey();
+        state.me = { ...state.me, api_key: data.api_key };
+        persistAuth(null, data.api_key);
+        renderAccount();
+        setAppMessage('success', 'API Key 已重新生成。');
+      } catch (error) {
+        setAppMessage('error', error.message || '重新生成 API Key 失败');
+      }
+    }
+
+    async function copyApiKey() {
+      try {
+        const value = state.me?.api_key || '';
+        if (!value) {
+          throw new Error('当前没有可复制的 API Key。');
+        }
+        await navigator.clipboard.writeText(value);
+        setAppMessage('success', 'API Key 已复制到剪贴板。');
+      } catch (error) {
+        setAppMessage('error', error.message || '复制 API Key 失败');
+      }
+    }
+
+    async function createDeviceAction(event) {
+      event.preventDefault();
+      try {
+        const data = await client.createDevice(els.deviceNameInput.value.trim());
+        state.latestDeviceToken = data.token || '';
+        els.deviceForm.reset();
+        await refreshDevices();
+        setAppMessage('success', '设备令牌已生成。');
+      } catch (error) {
+        setAppMessage('error', error.message || '生成设备令牌失败');
+      }
+    }
+
+    async function revokeDevice(deviceId) {
+      if (!window.confirm('撤销后这个设备令牌将无法继续访问接口。是否继续？')) {
+        return;
+      }
+      try {
+        await client.deleteDevice(deviceId);
+        await refreshDevices();
+        setAppMessage('success', '设备令牌已撤销。');
+      } catch (error) {
+        setAppMessage('error', error.message || '撤销设备失败');
+      }
+    }
+
+    async function addStore(event) {
+      event.preventDefault();
+      try {
+        await client.addStore(
+          els.storeNameInput.value.trim(),
+          els.storeClientIdInput.value.trim(),
+          els.storeApiKeyInput.value.trim(),
+          els.cloudStoreIdInput.value.trim()
+        );
+        els.storeForm.reset();
+        await refreshStores();
+        renderDashboard();
+        setAppMessage('success', '店铺已保存。');
+      } catch (error) {
+        setAppMessage('error', error.message || '新增店铺失败');
+      }
+    }
+
+    async function delStore(storeId) {
+      if (!window.confirm('删除后这个店铺将不再作为上传目标。是否继续？')) {
+        return;
+      }
+      try {
+        await client.deleteStore(storeId);
+        await refreshStores();
+        renderDashboard();
+        setAppMessage('success', '店铺已删除。');
+      } catch (error) {
+        setAppMessage('error', error.message || '删除店铺失败');
+      }
+    }
+
+    function toggleAll() {
+      const shouldSelectAll = !els.selectAllCheckbox.checked;
+      els.selectAllCheckbox.checked = shouldSelectAll;
+      state.products.forEach((product) => {
+        if (shouldSelectAll) {
+          state.selectedProductIds.add(product.id);
+        } else {
+          state.selectedProductIds.delete(product.id);
+        }
+      });
+      renderProducts();
+    }
+
+    async function uploadSelected() {
+      const productIds = Array.from(state.selectedProductIds);
+      if (!productIds.length) {
+        setAppMessage('error', '请先选择至少一个可上传商品。');
+        return;
+      }
+      try {
+        const data = await client.uploadProducts(productIds, els.productUploadStoreSelect.value || null);
+        setAppMessage('success', `已提交 ${data.submitted || 0} 个上传任务。`);
+        state.selectedProductIds.clear();
+        await loadProducts(state.productsPage);
+        await refreshSubscription();
+      } catch (error) {
+        setAppMessage('error', error.message || '提交上传任务失败');
+      }
+    }
+
+    async function upgradePlan(plan) {
+      try {
+        const paymentId = window.prompt(`输入 ${plan.toUpperCase()} 套餐的支付流水号，可留空：`, '') || '';
+        await client.upgradeSubscription(plan, paymentId);
+        await refreshMe();
+        await refreshSubscription();
+        renderDashboard();
+        setAppMessage('success', `套餐已切换到 ${plan.toUpperCase()}。`);
+      } catch (error) {
+        setAppMessage('error', error.message || '升级套餐失败');
+      }
+    }
+
+    async function logout() {
+      try {
+        await client.logout();
+      } catch (_error) {
+        // Local auth state should still be cleared if the network is unavailable.
+      }
+
+      clearAuth();
+      state.me = null;
+      state.stores = [];
+      state.products = [];
+      state.devices = [];
+      state.subscription = null;
+      state.selectedProductIds.clear();
+      state.latestDeviceToken = '';
+      updateShellAuthState(false);
+      setAuthMessage('success', '已退出登录。');
+    }
+
+    function bindEvents() {
+      els.loginTab.addEventListener('click', () => switchAuth('login'));
+      els.registerTab.addEventListener('click', () => switchAuth('register'));
+      els.authForm.addEventListener('submit', doAuth);
+      els.logoutBtn.addEventListener('click', logout);
+      els.storeForm.addEventListener('submit', addStore);
+      els.profileForm.addEventListener('submit', saveProfile);
+      els.passwordForm.addEventListener('submit', changePasswordAction);
+      els.deviceForm.addEventListener('submit', createDeviceAction);
+
+      document.querySelectorAll('.nav-btn').forEach((button) => {
+        button.addEventListener('click', () => showPage(button.dataset.page));
+      });
+
+      document.querySelectorAll('[data-jump-page]').forEach((button) => {
+        button.addEventListener('click', () => showPage(button.dataset.jumpPage));
+      });
+
+      els.productsTableBody.addEventListener('change', (event) => {
+        const checkbox = event.target.closest('[data-product-checkbox]');
+        if (!checkbox) {
+          return;
+        }
+        const productId = checkbox.getAttribute('data-product-checkbox');
+        if (checkbox.checked) {
+          state.selectedProductIds.add(productId);
+        } else {
+          state.selectedProductIds.delete(productId);
+        }
+        renderSelectedSummary();
+      });
+
+      els.selectAllCheckbox.addEventListener('change', () => {
+        const checked = els.selectAllCheckbox.checked;
+        state.products.forEach((product) => {
+          if (checked) {
+            state.selectedProductIds.add(product.id);
+          } else {
+            state.selectedProductIds.delete(product.id);
+          }
+        });
+        renderProducts();
+      });
+    }
+
+    function cacheElements() {
+      [
+        'authShell',
+        'appShell',
+        'loginTab',
+        'registerTab',
+        'displayNameField',
+        'displayNameInput',
+        'emailInput',
+        'passwordInput',
+        'authForm',
+        'authSubmitBtn',
+        'authMessage',
+        'pageTitle',
+        'pageDescription',
+        'topbarPlan',
+        'topbarTime',
+        'appMessage',
+        'sidebarUserName',
+        'sidebarUserMeta',
+        'dashboardMetrics',
+        'dashboardUserSummary',
+        'selectedSummary',
+        'productUploadStoreSelect',
+        'productsTableBody',
+        'productsPaginationText',
+        'productsPrevBtn',
+        'productsNextBtn',
+        'selectAllCheckbox',
+        'storeForm',
+        'storeNameInput',
+        'storeClientIdInput',
+        'storeApiKeyInput',
+        'cloudStoreIdInput',
+        'storesList',
+        'subscriptionSummary',
+        'plansList',
+        'profileForm',
+        'profileEmailInput',
+        'profileDisplayNameInput',
+        'profileMetaText',
+        'passwordForm',
+        'currentPasswordInput',
+        'newPasswordInput',
+        'apiKeyValue',
+        'deviceForm',
+        'deviceNameInput',
+        'latestDeviceTokenBox',
+        'devicesList',
+        'logoutBtn',
+      ].forEach((id) => {
+        els[id] = $(id);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      cacheElements();
+      bindEvents();
+      switchAuth('login');
+      await bootstrap();
+    });
+
+    window.loadProducts = loadProducts;
+    window.toggleAll = toggleAll;
+    window.uploadSelected = uploadSelected;
+    window.delStore = delStore;
+    window.upgradePlan = upgradePlan;
+    window.regenerateApiKeyAction = regenerateApiKeyAction;
+    window.copyApiKey = copyApiKey;
+    window.revokeDevice = revokeDevice;
+  </script>
+</body>
+</html>
