@@ -1,0 +1,57 @@
+2026-06-09 更新记录
+
+本次更新范围：Ozon 浏览器扩展源码版、保护版、发布 zip 包，以及利润/运费/佣金价格表数据。
+
+1. 一键跟卖/铺货商品数据抓取
+- 新增统一静默抓取逻辑：铺货前优先通过 Ozon entrypoint-api 按 productId/productUrl 获取商品结构化数据。
+- 当 API 数据缺少主图、描述或属性过少时，再静默 fetch 商品 HTML 作为兜底补齐。
+- 批量铺货、sku草稿铺货、商品卡片非当前页一键上货都改为静默抓取，不再跳转当前页面。
+- 当前已经打开的单个商品页仍保留 DOM 抓取路径，优先使用已完整渲染的数据。
+- 变体铺货继续保持非跳转式抓取，避免打开或切换新的变体页面。
+
+2. 真实包装重量
+- 上货商品数据现在要求从 Ozon 结算页获取真实包装重量。
+- 结算页重量优先走 one-click checkout 请求，失败后再走 add-to-cart checkout 兜底。
+- 筛选下滑过程中不再抓真实包装重量，避免拖慢筛选；需要 AI利润/1688 比价或铺货时才抓。
+
+3. sku草稿与自动筛选
+- 筛选规则命中的商品会写入 sku草稿，可从 OB 菜单进入 sku草稿跟卖面板。
+- 自动筛选时放慢下滑节奏，等待数据面板加载完成后再判断规则。
+- 缺少关键筛选字段的商品不再被当作命中，减少不符合规则的商品进入草稿。
+- 已加载前 100 个商品卡后，会强制复查前 100 个商品的跟卖人数、国籍等慢加载数据。
+- 筛选完成后会显示命中数量，并把命中的 SKU 保存在当前浏览器。
+
+4. AI利润 / 1688 比价
+- 原“1688比价”按钮改为“AI自动计算利润”。
+- 计算过程中界面只显示“AI正在计算利润”，不再显示抓重量等底层进度。
+- 1688 候选来源改为本地通过 AiPrice 图片搜索获取候选，不再依赖 SaaS 后端比价接口。
+- 利润计算改为使用“跟卖价格”作为售价，而不是跟卖最低价。
+- 抽佣按当前商品跟卖价格百分比计算，默认至少 12%，如果匹配到更高类目佣金则使用更高比例。
+- 运费按所选物流线路、真实重量和 Ozon 价格档位计算。
+- 新增 `pricing_data.js`，由 `价格表.xlsx` 和后端佣金数据生成，供扩展前端计算运费和佣金。
+
+5. 数据面板与筛选数据稳定性
+- 支持对卖家分析数据强制刷新，自动筛选复查时会绕过旧缓存。
+- 合并重复采集结果时保留已有的非空字段，避免后加载数据被空值覆盖。
+- 国家、跟卖人数、月销量、加购转化等慢加载字段会等待和复查，减少漏收符合条件商品。
+
+6. 发布包
+- 重新生成源码版：`ozon-weight-extension.zip`。
+- 重新生成保护版：`ozon-weight-extension-protected/` 和 `ozon-weight-extension-protected.zip`。
+- 保护版这次补入 `pricing_data.js`，避免 manifest 声明了资源但保护包缺文件。
+- 保护版 JS 已重新混淆。
+
+7. 已验证
+- `node --check ozon-weight-extension/content.js`
+- `node --check ozon-weight-extension/operation_bot.js`
+- `node --check ozon-weight-extension-protected/content.js`
+- `node --check ozon-weight-extension-protected/operation_bot.js`
+- `node --check ozon-weight-extension-protected/background.js`
+- `node --check ozon-weight-extension-protected/popup.js`
+- `node --check ozon-weight-extension-protected/pricing_data.js`
+- `unzip -t ozon-weight-extension.zip`
+- `unzip -t ozon-weight-extension-protected.zip`
+
+提醒：
+- 浏览器里如果加载的是 protected 包，需要重新安装或刷新 `ozon-weight-extension-protected.zip` 对应的扩展。
+- 这次主要改的是扩展端抓取、筛选、草稿、AI利润和打包内容，没有修改 SaaS 后端接口。

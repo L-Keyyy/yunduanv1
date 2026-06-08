@@ -2284,13 +2284,188 @@ async function extractCurrentProductDataForUpload() {
       packageWeight
     };
   } catch (error) {
-    const packageWeight = buildSyntheticPackageWeight(productData);
-    return {
-      ...productData,
-      extractionType: "upload-product",
-      ...(packageWeight ? { packageWeight } : {})
-    };
+    throw error;
   }
+}
+
+function hasUploadGallery(data) {
+  const gallery = data?.gallery || {};
+  return Boolean(gallery.coverImage || (Array.isArray(gallery.images) && gallery.images.some((item) => item?.src || item)));
+}
+
+function hasUploadDescription(data) {
+  const description = data?.description || {};
+  return normalizeMultilineText(`${description.text || ""} ${description.html || ""}`).length >= 20;
+}
+
+function needsHtmlUploadFallback(data) {
+  if (!data) {
+    return true;
+  }
+
+  const characteristicCount = Array.isArray(data.characteristics) ? data.characteristics.length : 0;
+  return !hasUploadGallery(data) || !hasUploadDescription(data) || characteristicCount < 3;
+}
+
+function mergeUploadCharacteristicArrays(primaryItems, fallbackItems) {
+  return mergeCharacteristicsData(
+    { items: Array.isArray(primaryItems) ? primaryItems : [] },
+    { items: Array.isArray(fallbackItems) ? fallbackItems : [] }
+  ).items;
+}
+
+function mergeUploadGallery(primaryGallery, fallbackGallery) {
+  const primary = primaryGallery || {};
+  const fallback = fallbackGallery || {};
+  const seen = new Set();
+  const images = [];
+
+  for (const item of [...(primary.images || []), ...(fallback.images || [])]) {
+    const rawSrc = typeof item === "string" ? item : item?.src || "";
+    const src = absoluteUrl(rawSrc || "");
+    if (!src || seen.has(src)) {
+      continue;
+    }
+    seen.add(src);
+    images.push({
+      src,
+      alt: normalizeText(item?.alt || "")
+    });
+  }
+
+  const coverImage =
+    absoluteUrl(primary.coverImage || "") ||
+    absoluteUrl(fallback.coverImage || "") ||
+    images[0]?.src ||
+    "";
+
+  return {
+    sku: normalizeText(primary.sku || fallback.sku || ""),
+    coverImage,
+    images,
+    videos: Array.isArray(primary.videos) && primary.videos.length ? primary.videos : fallback.videos || [],
+    videoCover: primary.videoCover || fallback.videoCover || null
+  };
+}
+
+function preferUploadDescription(primaryDescription, fallbackDescription) {
+  const primaryText = normalizeMultilineText(primaryDescription?.text || primaryDescription?.html || "");
+  const fallbackText = normalizeMultilineText(fallbackDescription?.text || fallbackDescription?.html || "");
+  if (!primaryText || fallbackText.length > primaryText.length + 40) {
+    return fallbackDescription || primaryDescription || null;
+  }
+  return primaryDescription || fallbackDescription || null;
+}
+
+function mergeUploadProductData(primaryData, fallbackData) {
+  if (!primaryData) {
+    return fallbackData;
+  }
+  if (!fallbackData) {
+    return primaryData;
+  }
+
+  const characteristics = mergeUploadCharacteristicArrays(
+    primaryData.characteristics,
+    fallbackData.characteristics
+  );
+  const shortCharacteristics =
+    Array.isArray(primaryData.shortCharacteristics) && primaryData.shortCharacteristics.length
+      ? primaryData.shortCharacteristics
+      : fallbackData.shortCharacteristics || [];
+  const gallery = mergeUploadGallery(primaryData.gallery, fallbackData.gallery);
+  const description = preferUploadDescription(primaryData.description, fallbackData.description);
+  const pricing =
+    primaryData.pricing?.uploadPrice || primaryData.pricing?.priceText
+      ? primaryData.pricing
+      : fallbackData.pricing || primaryData.pricing || null;
+
+  return {
+    ...fallbackData,
+    ...primaryData,
+    extractionType: "upload-product",
+    source: `${primaryData.source || "ozon-entrypoint-api"}+html-fallback`,
+    sourceUrl: primaryData.sourceUrl || fallbackData.sourceUrl,
+    title: normalizeText(primaryData.title || "") || fallbackData.title || "",
+    breadcrumbs:
+      Array.isArray(primaryData.breadcrumbs) && primaryData.breadcrumbs.length
+        ? primaryData.breadcrumbs
+        : fallbackData.breadcrumbs || [],
+    brand: primaryData.brand && Object.keys(primaryData.brand).length ? primaryData.brand : fallbackData.brand || {},
+    seller:
+      primaryData.seller && Object.keys(primaryData.seller).length ? primaryData.seller : fallbackData.seller || {},
+    marketingLabels:
+      Array.isArray(primaryData.marketingLabels) && primaryData.marketingLabels.length
+        ? primaryData.marketingLabels
+        : fallbackData.marketingLabels || [],
+    hashtags:
+      Array.isArray(primaryData.hashtags) && primaryData.hashtags.length
+        ? primaryData.hashtags
+        : fallbackData.hashtags || [],
+    description,
+    pricing,
+    price: primaryData.price || pricing?.uploadPrice || fallbackData.price || null,
+    oldPrice: primaryData.oldPrice || pricing?.oldPrice || fallbackData.oldPrice || null,
+    productWeight: primaryData.productWeight || fallbackData.productWeight || null,
+    packageWeight: primaryData.packageWeight || fallbackData.packageWeight || null,
+    characteristics,
+    characteristicsUrl: primaryData.characteristicsUrl || fallbackData.characteristicsUrl || null,
+    shortCharacteristics,
+    gallery,
+    variants:
+      Array.isArray(primaryData.variants) && primaryData.variants.length
+        ? primaryData.variants
+        : fallbackData.variants || [],
+    stats: {
+      ...(fallbackData.stats || {}),
+      ...(primaryData.stats || {}),
+      characteristicCount: characteristics.length,
+      shortCharacteristicCount: shortCharacteristics.length,
+      hasPrice: Boolean(pricing?.uploadPrice),
+      galleryImageCount: gallery?.images?.length || 0,
+      galleryVideoCount: gallery?.videos?.length || 0,
+      descriptionImageCount: description?.images?.length || 0,
+      descriptionVideoCount: description?.videos?.length || 0,
+      htmlFallbackUsed: true
+    }
+  };
+}
+
+async function fetchOzonProductDataForUpload(productId, productUrl = "") {
+  const targetUrl = absoluteUrl(productUrl || "", location.href);
+  const resolvedProductId =
+    Number(productId) ||
+    extractProductIdFromText(targetUrl || "") ||
+    extractProductIdFromUrl(targetUrl || "");
+  if (!Number.isFinite(resolvedProductId)) {
+    throw new Error("Missing Ozon product id.");
+  }
+
+  let apiData = null;
+  let apiError = null;
+  try {
+    apiData = await fetchOzonProductDataById(resolvedProductId, targetUrl);
+  } catch (error) {
+    apiError = error;
+  }
+
+  if (apiData && !needsHtmlUploadFallback(apiData)) {
+    return apiData;
+  }
+
+  let htmlData = null;
+  let htmlError = null;
+  try {
+    htmlData = await extractProductDataFromUrl(targetUrl || `/product/${resolvedProductId}/`);
+  } catch (error) {
+    htmlError = error;
+  }
+
+  if (apiData || htmlData) {
+    return mergeUploadProductData(apiData, htmlData);
+  }
+
+  throw apiError || htmlError || new Error("无法静默抓取商品数据");
 }
 
 function buildVariantProductData(baseProductData, variant = {}) {
@@ -2325,15 +2500,7 @@ function buildVariantProductData(baseProductData, variant = {}) {
     upsertShortCharacteristicValue(shortCharacteristics, "Артикул", String(productId));
   }
   const productWeight = extractProductWeightFromCharacteristics(characteristics);
-  const packageWeight =
-    variantChangesPhysicalProperties(variantAxes)
-      ? buildSyntheticPackageWeight({
-          productId,
-          title,
-          sourceUrl,
-          productWeight
-        })
-      : cloneJson(productData.packageWeight || buildSyntheticPackageWeight(productData));
+  const packageWeight = cloneJson(productData.packageWeight || null);
 
   const gallery = cloneJson(productData.gallery || {}) || {};
   const variantImageUrl = absoluteUrl(variant?.imageUrl || "", sourceUrl);
@@ -3012,6 +3179,7 @@ async function fetchOzonProductDataById(productId, productUrl = "") {
   const pricing = extractOzonPricing(states);
   const description = extractOzonDescription(states, payloads, shortCharacteristics, title);
   const productWeight = extractProductWeightFromCharacteristics(characteristics);
+  const packageWeight = await fetchOzonPackageWeightFromUrl(sourceUrl);
 
   return {
     extractionType: "upload-product",
@@ -3030,6 +3198,7 @@ async function fetchOzonProductDataById(productId, productUrl = "") {
     price: pricing?.uploadPrice || null,
     oldPrice: pricing?.oldPrice || null,
     productWeight,
+    packageWeight,
     characteristics,
     characteristicsUrl: buildFeaturesUrl(sourceUrl),
     shortCharacteristics,
@@ -4702,7 +4871,7 @@ async function startProductDashboardCloudUpload(productUrl, layout) {
   const result =
     layout === "product-page"
       ? await extractCurrentProductDataForUpload()
-      : await extractProductDataFromUrl(productUrl);
+      : await fetchOzonProductDataForUpload(null, productUrl);
 
   const submitResponse = await sendMessage({ type: "job-result", result });
   if (!submitResponse?.ok) {
@@ -5900,30 +6069,37 @@ async function extractProductDataFromUrl(url) {
       packageWeight
     };
   } catch (error) {
-    if (!productData.productWeight?.grams) {
-      throw error;
-    }
-
-    return {
-      ...productData,
-      extractionType: "upload-product",
-      packageWeight: {
-        productId: productData.productId,
-        productTitle: productData.title,
-        sourceUrl,
-        method: "characteristics-fallback",
-        weightKg: Number((productData.productWeight.grams / 1000).toFixed(6)),
-        weightText: productData.productWeight.weightText,
-        orderInfo: productData.productWeight.characteristicValueText || productData.productWeight.weightText,
-        itemCount: null,
-        totalStateId: null,
-        splitStateId: null,
-        deliveryText: null,
-        extractedAt: new Date().toISOString(),
-        warning: "Weight fallback used characteristics because checkout weight request was unavailable."
-      }
-    };
+    throw error;
   }
+}
+
+async function fetchOzonPackageWeightFromUrl(url) {
+  const targetUrl = absoluteUrl(url, location.href);
+  const targetProductId = extractProductIdFromUrl(targetUrl);
+  const currentProductId = extractProductIdFromUrl(location.href);
+  const useCurrentDocument =
+    targetProductId &&
+    currentProductId &&
+    Number(targetProductId) === Number(currentProductId) &&
+    /\/product\//i.test(location.pathname);
+  const fetched = useCurrentDocument
+    ? { root: document, sourceUrl: location.href }
+    : await fetchHtmlDocument(targetUrl);
+  const productId = extractProductIdFromUrl(fetched.sourceUrl) || targetProductId;
+  const productTitle = extractProductTitle(fetched.root);
+
+  return fetchWeightResultFromProductPage(
+    {
+      productId,
+      productTitle
+    },
+    {
+      root: fetched.root,
+      sourceUrl: fetched.sourceUrl,
+      silent: true,
+      productTitle
+    }
+  );
 }
 
 function isStructuredProductJob(job) {
@@ -6160,8 +6336,10 @@ async function ensureOperationBot() {
     escapeHtml,
     extractCharacteristicsData,
     extractCurrentProductDataForUpload,
+    fetchOzonProductDataForUpload,
     fetchOzonProductDataById,
     extractProductDataFromUrl,
+    fetchOzonPackageWeightFromUrl,
     extractProductVariants,
     extractGalleryData,
     extractPricingData,

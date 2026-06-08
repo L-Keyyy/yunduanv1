@@ -1,16 +1,28 @@
+import { OZON_COMMISSION_ROWS, SHIPPING_RATE_ROWS } from "./pricing_data.js";
+
 let initialized = false;
 
 const POSITION_STORAGE_KEY = "ozon-operation-bot-position";
 const STORE_STORAGE_KEY = "ozon-operation-bot-store-id";
+const LOGISTICS_STORAGE_KEY = "ozon-operation-bot-logistics-code";
 const DOM_UPLOAD_FLOW_KEY = "ozon-operation-bot-dom-upload-flow";
 const FILTER_RULE_STORAGE_KEY = "ozon-operation-bot-filter-rule";
 const FILTER_TARGET_COUNT_STORAGE_KEY = "ozon-operation-bot-filter-target-count";
 const SKU_DRAFT_STORAGE_KEY = "ozon-operation-bot-sku-draft";
 const DEFAULT_MIN_FOLLOW_PRICE_RATIO = 0.95;
 const DEFAULT_OLD_PRICE_RATIO = 1.75;
+const DEFAULT_LOGISTICS_CODE = "GUOO";
+const FIRST_BATCH_RECHECK_COUNT = 100;
+const DEFAULT_COMMISSION_RATE = 0.12;
+const LAST_MILE_RATE = 0.02;
+const LAST_MILE_MIN_RUB = 15;
+const LAST_MILE_MAX_RUB = 200;
 const RUB_TO_CNY_RATE = 0.092;
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const LOGISTICS_OPTIONS = Array.from(new Set(SHIPPING_RATE_ROWS.map((row) => row.carrier).filter(Boolean))).sort(
+  (left, right) => left.localeCompare(right)
+);
 
 const FILTER_NUMBER_FIELDS = [
   { key: "followersCount", label: "跟卖人数", suffix: "人" },
@@ -81,6 +93,7 @@ export function initOperationBot(h) {
     cloudSessionError: "",
     cloudAuthRequired: false,
     selectedStoreId: "",
+    selectedLogisticsCode: loadStoredLogisticsCode(),
     filterOpen: false,
     filterRule: loadFilterRule(),
     filterTargetCount: loadFilterTargetCount(),
@@ -114,6 +127,7 @@ export function initOperationBot(h) {
   const menu = root.querySelector('[data-role="menu"]');
   const panel = root.querySelector('[data-role="panel"]');
   let drag = null;
+  const checkoutWeightCache = new Map();
 
   function ensureStyle() {
     if (document.getElementById(styleId)) {
@@ -189,7 +203,7 @@ export function initOperationBot(h) {
       .obot-banner--error{background:#fef2f2;color:#dc2626}
       .obot-caption{font-size:11px;color:#94a3b8}
       .obot-tablewrap{padding:0 22px 18px;overflow:auto;min-height:240px}
-      .obot-table{width:100%;min-width:1540px;border-collapse:collapse}
+      .obot-table{width:100%;min-width:1680px;border-collapse:collapse}
       .obot-table th,.obot-table td{padding:12px 10px;border-bottom:1px solid #edf2f7;font-size:13px;vertical-align:middle;text-align:left}
       .obot-table th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#64748b;font-size:12px;font-weight:800;white-space:nowrap}
       .obot-sku{font-weight:800;color:#0f172a}
@@ -198,10 +212,15 @@ export function initOperationBot(h) {
       .obot-metric{font-weight:700;color:#0f172a;white-space:nowrap}
       .obot-metric--ok{color:#16a34a}
       .obot-metric--bad{color:#ef4444}
-      .obot-source{min-width:190px;max-width:230px}
+      .obot-source{min-width:260px;max-width:330px}
       .obot-source__price{font-size:13px;font-weight:900;color:#0f172a}
       .obot-source__title{margin-top:3px;font-size:12px;font-weight:700;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .obot-source__meta{margin-top:3px;font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .obot-source__cost{margin-top:3px;font-size:11px;color:#64748b;line-height:1.35}
+      .obot-source__profit{margin-top:6px;font-size:12px;font-weight:900;line-height:1.35}
+      .obot-source__profit--good{color:#16a34a}
+      .obot-source__profit--bad{color:#dc2626}
+      .obot-source__profit--warn{color:#ea580c}
       .obot-source__link{margin-top:4px;display:inline-flex;font-size:12px;font-weight:800;color:#2563eb;text-decoration:none}
       .obot-source__link:hover{text-decoration:underline}
       .obot-status{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;background:#f1f5f9;color:#475569}
@@ -292,6 +311,27 @@ export function initOperationBot(h) {
         localStorage.removeItem(scopedKey);
       }
     } catch (_error) {}
+  }
+
+  function normalizeLogisticsCode(value) {
+    const normalized = String(value || "").trim();
+    return LOGISTICS_OPTIONS.includes(normalized) ? normalized : DEFAULT_LOGISTICS_CODE;
+  }
+
+  function loadStoredLogisticsCode() {
+    try {
+      return normalizeLogisticsCode(localStorage.getItem(LOGISTICS_STORAGE_KEY));
+    } catch (_error) {
+      return DEFAULT_LOGISTICS_CODE;
+    }
+  }
+
+  function saveStoredLogisticsCode(value) {
+    const normalized = normalizeLogisticsCode(value);
+    try {
+      localStorage.setItem(LOGISTICS_STORAGE_KEY, normalized);
+    } catch (_error) {}
+    return normalized;
   }
 
   function emptyFilterRule() {
@@ -682,6 +722,10 @@ export function initOperationBot(h) {
     return Number.isFinite(value) ? value * RUB_TO_CNY_RATE : value;
   }
 
+  function cnyToRub(value) {
+    return Number.isFinite(value) && RUB_TO_CNY_RATE > 0 ? value / RUB_TO_CNY_RATE : value;
+  }
+
   function moneyFilterValue(value, fallbackCurrencyText = "") {
     const amount = parsePanelNumber(value);
     if (!Number.isFinite(amount)) {
@@ -836,6 +880,7 @@ export function initOperationBot(h) {
   function dashboardMetricAliases(key) {
     const aliases = {
       brand: ["品牌"],
+      category: ["类目", "分类", "品类"],
       fulfillment: ["配送模式", "履约方式"],
       monthlyRevenue: ["月销售额"],
       monthlySales: ["月销量"],
@@ -930,6 +975,7 @@ export function initOperationBot(h) {
     const priceSourceText = currentPriceText || avgPriceText;
     const values = {
       brand: dashboardMetricText(target, record, "brand", getMetric(record, "brand", "")),
+      category: dashboardMetricText(target, record, "category", getMetric(record, "category", "")),
       fulfillment: dashboardMetricText(target, record, "fulfillment", getMetric(record, "fulfillment", "")),
       country: extractCountryCode(target, record),
       followersCount: extractFollowersCount(target, record),
@@ -937,7 +983,7 @@ export function initOperationBot(h) {
       monthlyRevenue: moneyFilterValue(dashboardMetricText(target, record, "monthlyRevenue", getMetric(record, "monthlyRevenue"))),
       price: numericMoneyFilterValue(rawPrice, priceSourceText),
       weight: parseWeightGrams(
-        dashboardMetricText(target, record, "weight", getMetric(record, ["weight", "volume"], display.productWeightText || ""))
+        dashboardMetricText(target, record, "weight", getMetric(record, "weight", display.productWeightText || ""))
       ),
       listedDays: parseListedDays(dashboardMetricText(target, record, "listedAt", getMetric(record, "listedAt"))),
       promoConversion: parsePanelNumber(dashboardMetricText(target, record, "promoConversion", getMetric(record, "promoConversion"))),
@@ -1334,6 +1380,12 @@ export function initOperationBot(h) {
     const marketMinPriceText = h.formatMinPriceMetric(getMetric(record, "minPrice"));
     const marketPriceNumeric =
       parseAmount(display.currentPriceText) || parseAmount(getMetric(record, "avgPrice"));
+    const preliminaryWeightText = dashboardMetricText(
+      target,
+      record,
+      "weight",
+      getMetric(record, "weight", display.productWeightText || "")
+    );
     const metricValues = Object.fromEntries(
       (record?.metrics || [])
         .filter((metric) => metric?.key)
@@ -1354,10 +1406,11 @@ export function initOperationBot(h) {
       basePrice: marketPriceNumeric,
       marketPriceText,
       marketMinPriceText: text(marketMinPriceText, "-"),
-      packageWeightText: text(
-        getMetric(record, ["weight", "volume"], display.productWeightText || "-"),
-        "-"
-      ),
+      packageWeightText: text(preliminaryWeightText, "待比价抓取"),
+      checkoutWeightState: "idle",
+      checkoutWeightMessage: "",
+      checkoutWeight: null,
+      checkoutWeightG: null,
       monthlySalesText: getMetric(record, "monthlySales"),
       cartConversionText: getMetric(record, "cartConversion"),
       followPrice: formatInputPrice(marketPriceNumeric),
@@ -1370,12 +1423,142 @@ export function initOperationBot(h) {
     };
   }
 
-  async function fetchRecords(productIds) {
+  function checkoutWeightCacheKey(item) {
+    return item?.productUrl || (item?.productId ? `sku:${item.productId}` : "");
+  }
+
+  function normalizeCheckoutWeightResult(result) {
+    const weightKg = Number(result?.weightKg);
+    const parsedFromText = parseWeightGrams(result?.weightText);
+    const grams = Number.isFinite(weightKg) && weightKg > 0 ? weightKg * 1000 : parsedFromText;
+    if (!Number.isFinite(grams) || grams <= 0) {
+      return null;
+    }
+    return {
+      grams,
+      weightText: h.normalizeText(result?.weightText || `${Math.round(grams)} g`),
+      raw: result
+    };
+  }
+
+  function applyCheckoutWeightResult(item, result) {
+    const normalized = normalizeCheckoutWeightResult(result);
+    if (!normalized) {
+      return {
+        ...item,
+        packageWeightText: "获取失败",
+        checkoutWeightState: "error",
+        checkoutWeightMessage: "结算页没有返回包装重量",
+        checkoutWeight: null,
+        checkoutWeightG: null,
+        filterValues: {
+          ...(item.filterValues || {}),
+          weight: null
+        }
+      };
+    }
+
+    return {
+      ...item,
+      packageWeightText: normalized.weightText,
+      checkoutWeightState: "done",
+      checkoutWeightMessage: "",
+      checkoutWeight: normalized.raw,
+      checkoutWeightG: normalized.grams,
+      filterValues: {
+        ...(item.filterValues || {}),
+        weight: normalized.grams
+      },
+      profitInputs: item.profitInputs
+        ? {
+            ...item.profitInputs,
+            weightG: normalized.grams
+          }
+        : item.profitInputs
+    };
+  }
+
+  function applyCheckoutWeightError(item, message) {
+    return {
+      ...item,
+      packageWeightText: "获取失败",
+      checkoutWeightState: "error",
+      checkoutWeightMessage: message || "真实包装重量抓取失败",
+      checkoutWeight: null,
+      checkoutWeightG: null,
+      filterValues: {
+        ...(item.filterValues || {}),
+        weight: null
+      }
+    };
+  }
+
+  async function fetchCheckoutWeightForItem(item) {
+    const key = checkoutWeightCacheKey(item);
+    if (!key || !item?.productUrl) {
+      return { ok: false, error: "缺少商品链接" };
+    }
+    if (typeof h.fetchOzonPackageWeightFromUrl !== "function") {
+      return { ok: false, error: "结算页重量抓取能力不可用" };
+    }
+
+    const cached = checkoutWeightCache.get(key);
+    if (cached) {
+      return typeof cached.then === "function" ? cached : cached;
+    }
+
+    const request = h
+      .fetchOzonPackageWeightFromUrl(item.productUrl)
+      .then((result) => ({ ok: true, result }))
+      .catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }));
+    checkoutWeightCache.set(key, request);
+    const response = await request;
+    checkoutWeightCache.set(key, response);
+    return response;
+  }
+
+  async function enrichCheckoutWeights(items, options = {}) {
+    const nextItems = cloneItems(items);
+    const queue = nextItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item?.productId && item?.productUrl);
+
+    if (!queue.length) {
+      return nextItems;
+    }
+
+    const total = queue.length;
+    let completed = 0;
+    const concurrency = Math.min(4, total);
+
+    async function worker() {
+      while (queue.length) {
+        const entry = queue.shift();
+        if (!entry) {
+          continue;
+        }
+        const response = await fetchCheckoutWeightForItem(entry.item);
+        nextItems[entry.index] = response.ok
+          ? applyCheckoutWeightResult(entry.item, response.result)
+          : applyCheckoutWeightError(entry.item, response.error);
+        completed += 1;
+      }
+    }
+
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return nextItems;
+  }
+
+  async function fetchRecords(productIds, options = {}) {
     try {
       const response = await h.sendMessage({
         type: "get-seller-analytics",
         productIds,
-        fetchMissing: true
+        fetchMissing: true,
+        forceRefresh: Boolean(options.forceRefresh)
       });
       return response?.ok ? response.records || {} : {};
     } catch (_error) {
@@ -1420,6 +1603,67 @@ export function initOperationBot(h) {
     const records = await fetchRecords(productIds);
 
     return scoped.map((item) => buildItem(item, records[item.productId] || { productId: item.productId }));
+  }
+
+  function firstCollectedProductIds(collected, count = FIRST_BATCH_RECHECK_COUNT) {
+    return Array.from(collected.values())
+      .slice(0, count)
+      .map((item) => Number(item?.productId))
+      .filter(Number.isFinite);
+  }
+
+  async function recheckFirstLoadedProductCards(collected, targetCount) {
+    const productIds = firstCollectedProductIds(collected);
+    if (productIds.length < FIRST_BATCH_RECHECK_COUNT) {
+      return 0;
+    }
+
+    h.showOverlay(`已加载 ${FIRST_BATCH_RECHECK_COUNT} 个商品卡，正在复查跟卖人数和国籍...`, "#2563eb");
+    await h.sleep(2500);
+    await refreshBuyerAnalyticsPanelsForFilter(6000);
+    await h.sleep(1500);
+
+    const records = await fetchRecords(productIds, { forceRefresh: true });
+    const targetMap = new Map(
+      h.collectBuyerTargets()
+        .filter((target) => productIds.includes(Number(target.productId)))
+        .map((target) => [Number(target.productId), target])
+    );
+
+    const recheckedItems = [];
+    for (const productId of productIds) {
+      const target = targetMap.get(productId);
+      const existing = collected.get(productId);
+      if (target) {
+        recheckedItems.push(buildItem(target, records[productId] || existing || { productId }));
+      } else if (existing) {
+        recheckedItems.push({
+          ...existing,
+          metrics: Array.isArray(records[productId]?.metrics) ? records[productId].metrics : existing.metrics,
+          metricValues: mergeTextMaps(existing.metricValues, records[productId]?.metricValues),
+          filterValues: mergeFilterValues(existing.filterValues, {
+            ...existing.filterValues,
+            country: normalizeCountryCode(
+              [
+                records[productId]?.countryCode,
+                records[productId]?.countryFlag,
+                records[productId]?.originCountry,
+                ...(records[productId]?.rawLines || [])
+              ].filter(Boolean).join("\n")
+            )
+          })
+        });
+      }
+    }
+
+    mergeCollectedFilterItems(collected, recheckedItems);
+    const matchedCount = targetMatchedCount(Array.from(collected.values()));
+    const missingCount = missingActiveFilterDataCount(Array.from(collected.values()).slice(0, FIRST_BATCH_RECHECK_COUNT));
+    h.showOverlay(
+      `前 ${FIRST_BATCH_RECHECK_COUNT} 个商品卡复查完成：命中 ${matchedCount}${targetCount ? ` / ${targetCount}` : ""}，仍缺字段 ${missingCount} 个`,
+      missingCount ? "#ea580c" : "#16a34a"
+    );
+    return recheckedItems.length;
   }
 
   function targetMatchedCount(items) {
@@ -1514,7 +1758,7 @@ export function initOperationBot(h) {
 
   async function scrollFilterPageDown() {
     const before = filterScrollSnapshot();
-    const delta = Math.max(window.innerHeight * 1.45, 1040);
+    const delta = Math.max(window.innerHeight * 0.85, 620);
 
     window.scrollBy({ top: delta, behavior: "auto" });
     if (before.root) {
@@ -1529,7 +1773,7 @@ export function initOperationBot(h) {
       before.container.scrollTop += delta;
     }
 
-    await h.sleep(850);
+    await h.sleep(1400);
     const after = filterScrollSnapshot();
     const moved =
       Math.abs(after.windowY - before.windowY) > 24 ||
@@ -1545,6 +1789,37 @@ export function initOperationBot(h) {
     };
   }
 
+  function mergeTextMaps(existing = {}, incoming = {}) {
+    const result = { ...(existing || {}), ...(incoming || {}) };
+    for (const [key, value] of Object.entries(existing || {})) {
+      if (!h.normalizeText(incoming?.[key] || "") && h.normalizeText(value || "")) {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  function mergeFilterValues(existing = {}, incoming = {}) {
+    const result = { ...(existing || {}), ...(incoming || {}) };
+    for (const field of FILTER_NUMBER_FIELDS) {
+      const key = field.key;
+      const existingValue = Number(existing?.[key]);
+      const incomingValue = Number(incoming?.[key]);
+      if (Number.isFinite(existingValue) && !Number.isFinite(incomingValue)) {
+        result[key] = existingValue;
+      }
+    }
+
+    for (const key of ["brand", "category", "fulfillment", "country"]) {
+      const existingText = h.normalizeText(existing?.[key] || "");
+      const incomingText = h.normalizeText(incoming?.[key] || "");
+      if (existingText && !incomingText) {
+        result[key] = existing?.[key];
+      }
+    }
+    return result;
+  }
+
   function mergeCollectedFilterItems(collected, items) {
     for (const item of items || []) {
       if (!item?.productId) {
@@ -1552,9 +1827,14 @@ export function initOperationBot(h) {
       }
 
       const existing = collected.get(item.productId);
+      const existingMetrics = Array.isArray(existing?.metrics) ? existing.metrics : [];
+      const incomingMetrics = Array.isArray(item?.metrics) ? item.metrics : [];
       collected.set(item.productId, {
         ...(existing || {}),
         ...item,
+        metrics: incomingMetrics.length >= existingMetrics.length ? incomingMetrics : existingMetrics,
+        metricValues: mergeTextMaps(existing?.metricValues, item?.metricValues),
+        filterValues: mergeFilterValues(existing?.filterValues, item?.filterValues),
         selected: existing?.selected ?? item.selected
       });
     }
@@ -1568,7 +1848,7 @@ export function initOperationBot(h) {
     }
   }
 
-  async function refreshBuyerAnalyticsPanelsForFilter(timeoutMs = 3000) {
+  async function refreshBuyerAnalyticsPanelsForFilter(timeoutMs = 4500) {
     if (typeof h.refreshBuyerAnalyticsPanels !== "function") {
       return;
     }
@@ -1589,18 +1869,11 @@ export function initOperationBot(h) {
     }
 
     let currentItems = items || [];
-    const enoughReadyRatio = 0.92;
-    const maxAttempts = currentItems.length > 20 ? 2 : 4;
+    const maxAttempts = currentItems.length > 20 ? 6 : 8;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await waitWhileAutoFilterPaused();
       const missingCount = missingActiveFilterDataCount(currentItems);
       if (!missingCount) {
-        return currentItems;
-      }
-      const readyRatio = currentItems.length
-        ? (currentItems.length - missingCount) / currentItems.length
-        : 0;
-      if (attempt > 0 && readyRatio >= enoughReadyRatio) {
         return currentItems;
       }
 
@@ -1612,14 +1885,14 @@ export function initOperationBot(h) {
       );
 
       await refreshBuyerAnalyticsPanelsForFilter();
-      await h.sleep(500);
+      await h.sleep(1000);
       currentItems = await collectItems("current-page");
     }
 
     const remainingMissingCount = missingActiveFilterDataCount(currentItems);
     if (remainingMissingCount) {
       h.showOverlay(
-        `部分数据面板未加载完成：还有 ${remainingMissingCount} 个 SKU 缺少筛选字段，先按已拿到的数据继续`,
+        `部分数据面板仍未加载：还有 ${remainingMissingCount} 个 SKU 缺少筛选字段，本轮不会把这些空字段算作命中`,
         "#ea580c"
       );
     }
@@ -1637,6 +1910,7 @@ export function initOperationBot(h) {
     let lastDraftCount = 0;
     let stableRounds = 0;
     let bottomRounds = 0;
+    let firstBatchRechecked = false;
     const maxSteps = Math.min(Math.max(targetCount * 10, 80), 260);
 
     for (let step = 0; step < maxSteps && stableRounds < 10 && bottomRounds < 4; step += 1) {
@@ -1648,6 +1922,10 @@ export function initOperationBot(h) {
       const beforeCollectedSize = collected.size;
       const currentItems = await waitForCurrentFilterDataReady(await collectItems("current-page"), targetCount);
       mergeCollectedFilterItems(collected, currentItems);
+      if (!firstBatchRechecked && collected.size >= FIRST_BATCH_RECHECK_COUNT) {
+        firstBatchRechecked = true;
+        await recheckFirstLoadedProductCards(collected, targetCount);
+      }
       const items = Array.from(collected.values());
       const matchedCount = targetMatchedCount(items);
       h.showOverlay(
@@ -1702,6 +1980,22 @@ export function initOperationBot(h) {
         uploadState: existing.uploadState,
         uploadMessage: existing.uploadMessage,
         uploadTaskId: existing.uploadTaskId,
+        packageWeightText: existing.packageWeightText || item.packageWeightText,
+        checkoutWeightState: existing.checkoutWeightState || item.checkoutWeightState,
+        checkoutWeightMessage: existing.checkoutWeightMessage || item.checkoutWeightMessage,
+        checkoutWeight: existing.checkoutWeight || item.checkoutWeight,
+        checkoutWeightG: existing.checkoutWeightG || item.checkoutWeightG,
+        metrics:
+          Array.isArray(existing.metrics) && existing.metrics.length > (Array.isArray(item.metrics) ? item.metrics.length : 0)
+            ? existing.metrics
+            : item.metrics,
+        metricValues: mergeTextMaps(existing.metricValues, item.metricValues),
+        filterValues: {
+          ...mergeFilterValues(existing.filterValues, item.filterValues),
+          ...(Number.isFinite(Number(existing.checkoutWeightG))
+            ? { weight: Number(existing.checkoutWeightG) }
+            : {})
+        },
         sourcingState: existing.sourcingState,
         sourcingMessage: existing.sourcingMessage,
         sourcingCandidates: existing.sourcingCandidates,
@@ -2359,6 +2653,288 @@ export function initOperationBot(h) {
     return parsed === null ? "-" : `¥${parsed.toFixed(2)}`;
   }
 
+  function formatCny(value) {
+    return Number.isFinite(value) ? `¥${value.toFixed(2)}` : "¥-";
+  }
+
+  function formatRub(value) {
+    return Number.isFinite(value) ? `${value.toFixed(2)} ₽` : "- ₽";
+  }
+
+  function formatPercent(value) {
+    return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "-";
+  }
+
+  function normalizePricingText(value) {
+    return h
+      .normalizeText(String(value || ""))
+      .toLowerCase()
+      .replace(/\s+/g, "");
+  }
+
+  function selectedLogisticsCode() {
+    return normalizeLogisticsCode(state.selectedLogisticsCode || DEFAULT_LOGISTICS_CODE);
+  }
+
+  function logisticsOptionsHtml() {
+    return LOGISTICS_OPTIONS.map(
+      (code) =>
+        `<option value="${h.escapeHtml(code)}" ${selectedLogisticsCode() === code ? "selected" : ""}>${h.escapeHtml(
+          code
+        )}</option>`
+    ).join("");
+  }
+
+  function parseShippingFeeFormula(feeText) {
+    const normalized = String(feeText || "").replace(/,/g, ".");
+    const numbers = normalized.match(/\d+(?:\.\d+)?/g) || [];
+    if (numbers.length < 2) {
+      return null;
+    }
+
+    const base = Number(numbers[0]);
+    const perUnit = Number(numbers[1]);
+    const unitG = Number(numbers[2] || 1);
+    if (!Number.isFinite(base) || !Number.isFinite(perUnit) || !Number.isFinite(unitG) || unitG <= 0) {
+      return null;
+    }
+
+    return {
+      base,
+      perGram: perUnit / unitG
+    };
+  }
+
+  function rowMatchesSaleValue(row, salePriceRub) {
+    if (!Number.isFinite(salePriceRub)) {
+      return false;
+    }
+    const min = Number(row.valueRubMin);
+    const max = Number(row.valueRubMax);
+    return (!Number.isFinite(min) || salePriceRub >= min) && (!Number.isFinite(max) || salePriceRub <= max);
+  }
+
+  function rowMatchesWeight(row, weightG) {
+    if (!Number.isFinite(weightG)) {
+      return false;
+    }
+    const min = Number(row.minG);
+    const max = Number(row.maxG);
+    return (!Number.isFinite(min) || weightG >= min) && (!Number.isFinite(max) || weightG <= max);
+  }
+
+  function chooseShippingRateRow(logisticsCode, weightG, salePriceRub) {
+    const rows = SHIPPING_RATE_ROWS.filter((row) => row.carrier === logisticsCode);
+    const valueRows = rows.filter((row) => rowMatchesSaleValue(row, salePriceRub));
+    const candidateRows = (valueRows.length ? valueRows : rows).filter((row) => rowMatchesWeight(row, weightG));
+    if (!candidateRows.length) {
+      return null;
+    }
+
+    return [...candidateRows].sort((left, right) => {
+      const leftWeightSpan = (Number(left.maxG) || 0) - (Number(left.minG) || 0);
+      const rightWeightSpan = (Number(right.maxG) || 0) - (Number(right.minG) || 0);
+      if (leftWeightSpan !== rightWeightSpan) {
+        return leftWeightSpan - rightWeightSpan;
+      }
+      const leftValueSpan = (Number(left.valueRubMax) || 0) - (Number(left.valueRubMin) || 0);
+      const rightValueSpan = (Number(right.valueRubMax) || 0) - (Number(right.valueRubMin) || 0);
+      return leftValueSpan - rightValueSpan;
+    })[0];
+  }
+
+  function calculateShippingCostCny(logisticsCode, weightG, salePriceRub) {
+    if (!Number.isFinite(weightG) || weightG <= 0) {
+      return {
+        ok: false,
+        reason: "缺少 Ozon 重量"
+      };
+    }
+
+    const row = chooseShippingRateRow(logisticsCode, weightG, salePriceRub);
+    if (!row) {
+      return {
+        ok: false,
+        reason: `${logisticsCode} 没有命中 ${Math.round(weightG)}g 的运费区间`
+      };
+    }
+
+    const formula = parseShippingFeeFormula(row.fee);
+    if (!formula) {
+      return {
+        ok: false,
+        reason: `运费公式无法解析：${row.fee}`
+      };
+    }
+
+    return {
+      ok: true,
+      row,
+      costCny: formula.base + formula.perGram * weightG,
+      formula
+    };
+  }
+
+  function saleTierKey(salePriceRub) {
+    if (!Number.isFinite(salePriceRub) || salePriceRub <= 1500) {
+      return "t1";
+    }
+    return salePriceRub <= 5000 ? "t2" : "t3";
+  }
+
+  function commissionSchemaSuffix(item) {
+    const fulfillmentText = normalizePricingText(
+      item?.filterValues?.fulfillment || itemMetricText(item, "fulfillment", "")
+    );
+    return fulfillmentText.includes("fbp") ? "f" : "r";
+  }
+
+  function commissionCategoryText(item) {
+    return (
+      item?.filterValues?.category ||
+      itemMetricText(item, "category", "") ||
+      item?.category ||
+      item?.categoryText ||
+      ""
+    );
+  }
+
+  function findCommissionRate(item, salePriceRub) {
+    const categoryText = normalizePricingText(commissionCategoryText(item));
+    const tier = saleTierKey(salePriceRub);
+    const schemaSuffix = commissionSchemaSuffix(item);
+    const rateKey = `${tier}${schemaSuffix}`;
+
+    const matchedRow = categoryText
+      ? OZON_COMMISSION_ROWS.find((row) => {
+          const category = normalizePricingText(row.category);
+          const group = normalizePricingText(row.group);
+          return Boolean(
+            category &&
+              (categoryText.includes(category) ||
+                category.includes(categoryText) ||
+                (group && categoryText.includes(group)))
+          );
+        })
+      : null;
+
+    const rate = Number(matchedRow?.[rateKey]);
+    if (Number.isFinite(rate)) {
+      const effectiveRate = Math.max(rate, DEFAULT_COMMISSION_RATE);
+      return {
+        rate: effectiveRate,
+        rawRate: rate,
+        rateFloored: effectiveRate > rate,
+        tier,
+        schema: schemaSuffix === "f" ? "FBP" : "rFBS",
+        category: matchedRow.category,
+        fallback: false
+      };
+    }
+
+    return {
+      rate: DEFAULT_COMMISSION_RATE,
+      rawRate: DEFAULT_COMMISSION_RATE,
+      rateFloored: false,
+      tier,
+      schema: schemaSuffix === "f" ? "FBP" : "rFBS",
+      category: "默认费率",
+      fallback: true
+    };
+  }
+
+  function itemWeightGrams(item) {
+    const values = [
+      Number(item?.checkoutWeightG),
+      Number(item?.profitInputs?.weightG),
+      item?.checkoutWeightState === "done" ? parseWeightGrams(item?.packageWeightText) : null
+    ];
+    return values.find((value) => Number.isFinite(value) && value > 0) ?? null;
+  }
+
+  function calculateProfitBreakdown(item, candidate) {
+    const purchasePriceCny = finiteParsedNumber(candidate?.priceFrom ?? candidate?.priceTo);
+    const salePriceCny =
+      finiteParsedNumber(item?.followPrice) ??
+      finiteParsedNumber(item?.profitInputs?.ozonFollowPrice) ??
+      finiteParsedNumber(item?.marketPriceText);
+    const salePriceRubEquivalent = cnyToRub(salePriceCny);
+    const weightG = itemWeightGrams(item);
+    const logisticsCode = selectedLogisticsCode();
+
+    if (!Number.isFinite(purchasePriceCny)) {
+      return { ok: false, reason: "缺少 1688 采购价" };
+    }
+    if (!Number.isFinite(salePriceCny) || salePriceCny <= 0) {
+      return { ok: false, reason: "缺少 Ozon 跟卖售价" };
+    }
+
+    const shipping = calculateShippingCostCny(logisticsCode, weightG, salePriceRubEquivalent);
+    if (!shipping.ok) {
+      return { ok: false, reason: shipping.reason };
+    }
+
+    const commission = findCommissionRate(item, salePriceRubEquivalent);
+    const commissionCny = salePriceCny * commission.rate;
+    const lastMileRub = Math.min(
+      Math.max(salePriceRubEquivalent * LAST_MILE_RATE, LAST_MILE_MIN_RUB),
+      LAST_MILE_MAX_RUB
+    );
+    const lastMileCny = rubToCny(lastMileRub);
+    const totalCostCny = purchasePriceCny + shipping.costCny + commissionCny + lastMileCny;
+    const profitCny = salePriceCny - totalCostCny;
+
+    return {
+      ok: true,
+      logisticsCode,
+      salePriceRub: salePriceRubEquivalent,
+      salePriceCny,
+      weightG,
+      purchasePriceCny,
+      shippingCostCny: shipping.costCny,
+      shippingRow: shipping.row,
+      commission,
+      commissionCny,
+      lastMileRub,
+      lastMileCny,
+      totalCostCny,
+      profitCny,
+      margin: salePriceCny > 0 ? profitCny / salePriceCny : null
+    };
+  }
+
+  function profitBreakdownHtml(item, candidate) {
+    const breakdown = calculateProfitBreakdown(item, candidate);
+    if (!breakdown.ok) {
+      return `<div class="obot-source__profit obot-source__profit--warn">利润待算：${h.escapeHtml(
+        breakdown.reason
+      )}</div>`;
+    }
+
+    const profitClass = breakdown.profitCny >= 0 ? "obot-source__profit--good" : "obot-source__profit--bad";
+    const commissionText = `${formatPercent(breakdown.commission.rate)} ${
+      breakdown.commission.fallback
+        ? "默认"
+        : `${h.escapeHtml(breakdown.commission.category)}${breakdown.commission.rateFloored ? " · 12%下限" : ""}`
+    }`;
+    return `
+      <div class="obot-source__profit ${profitClass}">
+        利润 ${formatCny(breakdown.profitCny)} · 利润率 ${formatPercent(breakdown.margin)}
+      </div>
+      <div class="obot-source__cost">
+        成本 ${formatCny(breakdown.totalCostCny)} = 货源 ${formatCny(breakdown.purchasePriceCny)}
+        + 运费 ${formatCny(breakdown.shippingCostCny)}
+        + 抽佣 ${formatCny(breakdown.commissionCny)}
+        + 尾程 ${formatCny(breakdown.lastMileCny)}
+      </div>
+      <div class="obot-source__meta" title="${h.escapeHtml(breakdown.shippingRow?.fee || "")}">
+        ${h.escapeHtml(breakdown.logisticsCode)} · ${h.escapeHtml(breakdown.shippingRow?.group || "")}
+        · ${Math.round(breakdown.weightG)}g · 跟卖价 ${formatCny(breakdown.salePriceCny)}
+      </div>
+      <div class="obot-source__meta">抽佣 ${commissionText} · 尾程 ${formatRub(breakdown.lastMileRub)}</div>
+    `;
+  }
+
   function sourcingCandidatePriceText(candidate) {
     const priceFrom = finiteParsedNumber(candidate?.priceFrom);
     const priceTo = finiteParsedNumber(candidate?.priceTo);
@@ -2389,15 +2965,15 @@ export function initOperationBot(h) {
   function sourcingCellHtml(item) {
     const stateText = item.sourcingState || "idle";
     if (stateText === "running") {
-      return `<div class="obot-source"><span class="obot-status" data-s="running">${h.escapeHtml(item.sourcingMessage || "1688比价中...")}</span></div>`;
+      return `<div class="obot-source"><span class="obot-status" data-s="running">AI正在计算利润</span></div>`;
     }
     if (stateText === "error") {
-      return `<div class="obot-source"><span class="obot-status" data-s="error">${h.escapeHtml(item.sourcingMessage || "比价失败")}</span></div>`;
+      return `<div class="obot-source"><span class="obot-status" data-s="error">${h.escapeHtml(item.sourcingMessage || "AI计算失败")}</span></div>`;
     }
 
     const candidate = bestSourcingCandidate(item);
     if (!candidate) {
-      const message = stateText === "not_found" ? item.sourcingMessage || "未找到货源" : "未比价";
+      const message = stateText === "not_found" ? item.sourcingMessage || "未找到货源" : "未计算";
       return `<div class="obot-source"><span class="obot-status" data-s="${stateText === "not_found" ? "error" : "idle"}">${h.escapeHtml(message)}</span></div>`;
     }
 
@@ -2406,16 +2982,16 @@ export function initOperationBot(h) {
     return `
       <div class="obot-source">
         <div class="obot-source__price">${h.escapeHtml(sourcingCandidatePriceText(candidate))}</div>
-        <div class="obot-source__title" title="${h.escapeHtml(candidate.title || "")}">${h.escapeHtml(candidate.title || "1688货源")}</div>
+        <div class="obot-source__title" title="${h.escapeHtml(candidate.title || "")}">${h.escapeHtml(candidate.title || "AI候选货源")}</div>
         <div class="obot-source__meta">${h.escapeHtml(`${sourcingCandidateScoreText(candidate)} · 候选 ${candidatesCount} 个`)}</div>
         ${sellerText ? `<div class="obot-source__meta">${h.escapeHtml(sellerText)}</div>` : ""}
+        ${profitBreakdownHtml(item, candidate)}
         ${candidate.url ? `<a class="obot-source__link" href="${h.escapeHtml(candidate.url)}" target="_blank" rel="noreferrer">打开1688</a>` : ""}
       </div>
     `;
   }
 
   function build1688PayloadItem(item) {
-    const weightFromFilter = Number(item?.filterValues?.weight);
     const monthlySalesFromFilter = Number(item?.filterValues?.monthlySales);
     return {
       product_id: Number(item.productId),
@@ -2428,7 +3004,10 @@ export function initOperationBot(h) {
         ? item.basePrice
         : finiteParsedNumber(item.marketPriceText),
       min_follow_price: finiteParsedNumber(item.minFollowPrice),
-      weight_g: Number.isFinite(weightFromFilter) ? weightFromFilter : parseWeightGrams(item.packageWeightText),
+      category: commissionCategoryText(item),
+      fulfillment: item?.filterValues?.fulfillment || itemMetricText(item, "fulfillment", ""),
+      logistics_code: selectedLogisticsCode(),
+      weight_g: itemWeightGrams(item),
       monthly_sales: Number.isFinite(monthlySalesFromFilter)
         ? monthlySalesFromFilter
         : parsePanelNumber(item.monthlySalesText)
@@ -2451,6 +3030,34 @@ export function initOperationBot(h) {
     renderMenu();
   }
 
+  async function ensureCheckoutWeightsForSourcing(queue) {
+    const ids = new Set(queue.map((item) => Number(item.productId)));
+    state.items = state.items.map((item) => {
+      if (!ids.has(Number(item.productId)) || Number.isFinite(Number(item.checkoutWeightG))) {
+        return item;
+      }
+      return {
+        ...item,
+        packageWeightText: "抓取中",
+        checkoutWeightState: "running",
+        checkoutWeightMessage: "AI正在计算利润"
+      };
+    });
+    persistStateToDomUploadFlow();
+    renderPanel();
+
+    const enrichedItems = await enrichCheckoutWeights(queue);
+    const enrichedMap = new Map(enrichedItems.map((item) => [Number(item.productId), item]));
+    state.items = state.items.map((item) => {
+      const enriched = enrichedMap.get(Number(item.productId));
+      return enriched ? { ...item, ...enriched } : item;
+    });
+    persistStateToDomUploadFlow();
+    saveSourcingDraftState();
+    renderPanel();
+    return state.items.filter((item) => ids.has(Number(item.productId)));
+  }
+
   async function compareSelected1688Sources() {
     if (state.sourcingLoading) {
       return;
@@ -2466,7 +3073,7 @@ export function initOperationBot(h) {
     state.sourcingError = "";
     markSourcingQueue(queue, {
       sourcingState: "running",
-      sourcingMessage: "正在搜索1688...",
+      sourcingMessage: "AI正在计算利润",
       sourcingCandidates: [],
       sourcingBest: null,
       profitInputs: null
@@ -2474,13 +3081,20 @@ export function initOperationBot(h) {
     renderPanel();
 
     try {
+      const weightedQueue = await ensureCheckoutWeightsForSourcing(queue);
+      markSourcingQueue(weightedQueue, {
+        sourcingState: "running",
+        sourcingMessage: "AI正在计算利润"
+      });
+      renderPanel();
+
       const response = await h.sendMessage({
         type: "compare-1688-sourcing",
-        items: queue.map((item) => build1688PayloadItem(item)),
+        items: weightedQueue.map((item) => build1688PayloadItem(item)),
         maxCandidates: 5
       });
       if (!response?.ok) {
-        throw new Error(response?.error || "1688比价失败");
+        throw new Error(response?.error || "AI计算利润失败");
       }
 
       const resultItems = Array.isArray(response.result?.items) ? response.result.items : [];
@@ -2518,7 +3132,6 @@ export function initOperationBot(h) {
 
       persistStateToDomUploadFlow();
       saveSourcingDraftState();
-      h.showOverlay(`1688比价完成：${foundCount} / ${queue.length} 个 SKU 找到候选`, foundCount ? "#16a34a" : "#ea580c");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       state.sourcingError = message;
@@ -2934,11 +3547,18 @@ export function initOperationBot(h) {
             <div class="obot-caption">型号是必填上传特征，可手填，也可随机</div>
           </div>
           <div class="obot-field">
-            <label>1688货源</label>
+            <label>AI利润</label>
             <div class="obot-chiprow">
-              <button class="obot-chip" data-action="compare-1688" ${state.uploading || state.sourcingLoading || !selectedCount ? "disabled" : ""}>${state.sourcingLoading ? "比价中..." : "1688比价"}</button>
+              <button class="obot-chip" data-action="compare-1688" ${state.uploading || state.sourcingLoading || !selectedCount ? "disabled" : ""}>${state.sourcingLoading ? "AI正在计算利润" : "AI自动计算利润"}</button>
             </div>
-            <div class="obot-caption">按已选 SKU 搜索 1688 候选，先展示采购价，利润公式后续接入</div>
+            <div class="obot-caption">自动匹配货源、重量、运费和佣金并计算利润</div>
+          </div>
+          <div class="obot-field">
+            <label>物流线路</label>
+            <select class="obot-select" data-logistics-select="1" ${state.uploading ? "disabled" : ""}>
+              ${logisticsOptionsHtml()}
+            </select>
+            <div class="obot-caption">未选择时默认 GUOO；运费按 Ozon 重量命中阶梯公式计算</div>
           </div>
         </div>
         ${panelBannerHtml()}
@@ -2948,7 +3568,7 @@ export function initOperationBot(h) {
             totalCount
               ? `<table class="obot-table"><thead><tr><th><input type="checkbox" data-action="toggle-all" ${
                   selectedCount === totalCount && totalCount ? "checked" : ""
-                } ${state.uploading ? "disabled" : ""} /></th><th>图片</th><th>SKU</th><th>跟卖价格</th><th>跟卖最低价</th><th>型号</th><th>产品价格</th><th>市场最低价</th><th>1688货源</th><th>重量</th><th>月销量</th><th>加购转化</th><th>状态</th><th>操作</th></tr></thead><tbody>${tableRows()}</tbody></table>`
+                } ${state.uploading ? "disabled" : ""} /></th><th>图片</th><th>SKU</th><th>跟卖价格</th><th>跟卖最低价</th><th>型号</th><th>产品价格</th><th>市场最低价</th><th>AI利润</th><th>重量</th><th>月销量</th><th>加购转化</th><th>状态</th><th>操作</th></tr></thead><tbody>${tableRows()}</tbody></table>`
               : `<div class="obot-empty">当前页没有找到 SKU。</div>`
           }
         </div>
@@ -3083,11 +3703,17 @@ export function initOperationBot(h) {
       renderPanel();
 
       try {
-        if (typeof h.fetchOzonProductDataById !== "function") {
+        if (
+          typeof h.fetchOzonProductDataForUpload !== "function" &&
+          typeof h.fetchOzonProductDataById !== "function"
+        ) {
           throw new Error("变体商品页抓取能力不可用");
         }
 
         async function extractVariantUploadData(item) {
+          if (typeof h.fetchOzonProductDataForUpload === "function") {
+            return h.fetchOzonProductDataForUpload(item.productId, item.productUrl);
+          }
           return h.fetchOzonProductDataById(item.productId, item.productUrl);
         }
 
@@ -3099,7 +3725,7 @@ export function initOperationBot(h) {
               minFollowPrice: item.minFollowPrice,
               model: item.model,
               uploadState: "running",
-              uploadMessage: "正在抓取该变体商品页..."
+              uploadMessage: "正在静默抓取该变体商品..."
             },
             true
           );
@@ -3165,6 +3791,12 @@ export function initOperationBot(h) {
           }
           return currentProductDataPromise;
         }
+        if (typeof h.fetchOzonProductDataForUpload === "function") {
+          return h.fetchOzonProductDataForUpload(item.productId, item.productUrl);
+        }
+        if (typeof h.fetchOzonProductDataById === "function") {
+          return h.fetchOzonProductDataById(item.productId, item.productUrl);
+        }
         return h.extractProductDataFromUrl(item.productUrl);
       }
 
@@ -3196,7 +3828,7 @@ export function initOperationBot(h) {
             minFollowPrice,
             model,
             uploadState: "running",
-            uploadMessage: "正在上传到 SaaS..."
+            uploadMessage: "正在静默抓取并上传到 SaaS..."
           },
           true
         );
@@ -3579,6 +4211,13 @@ export function initOperationBot(h) {
     const selectElement = target.closest("[data-select]");
     if (selectElement) {
       void runAction("", selectElement.dataset);
+      return;
+    }
+
+    const logisticsElement = target.closest("[data-logistics-select]");
+    if (logisticsElement instanceof HTMLSelectElement) {
+      state.selectedLogisticsCode = saveStoredLogisticsCode(logisticsElement.value);
+      renderPanel();
       return;
     }
 

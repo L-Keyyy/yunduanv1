@@ -21,11 +21,13 @@ const HD_STATUS_REFRESH_MS = 1500;
 const CLOUD_FOLLOW_COLLECT_ALARM = "cloud-follow-collect";
 const CLOUD_FOLLOW_COLLECT_INTERVAL_MINUTES = 1;
 const CLOUD_FOLLOW_DEVICE_ID_KEY = "cloudFollow:deviceId";
+const AIPRICE_IMAGE_SEARCH_URL = "https://www.aiprice.com/img/search";
 
 const sellerAnalyticsInflight = new Map();
 let sellerContextInflight = null;
 let sellerBridgeTabPromise = null;
 let cloudFollowCollectInFlight = false;
+let aiPriceWorkerTabId = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -574,7 +576,7 @@ async function getSellerAnalytics(productIds, options = {}) {
     const record = data[analyticsKey(productId)] || null;
     result[productId] = record;
 
-    if (options.fetchMissing && (!record || !isFreshSellerAnalyticsRecord(record))) {
+    if (options.forceRefresh || (options.fetchMissing && (!record || !isFreshSellerAnalyticsRecord(record)))) {
       missingIds.push(productId);
     }
   }
@@ -1173,6 +1175,526 @@ async function fetchHdJsonSafe(pathname, options = {}, preferredOrigin = null) {
       networkError instanceof Error ? networkError.message : String(networkError || "unknown_error")
     }`
   );
+}
+
+function normalizeSourcingText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sourcingDeepGet(data, paths, defaultValue = null) {
+  for (const path of paths) {
+    let current = data;
+    for (const part of String(path).split(".")) {
+      if (current && typeof current === "object" && part in current) {
+        current = current[part];
+      } else {
+        current = null;
+        break;
+      }
+    }
+    if (current !== null && current !== undefined && current !== "") {
+      return current;
+    }
+  }
+  return defaultValue;
+}
+
+function sourcingParseNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const raw = normalizeSourcingText(value);
+  if (!raw || raw === "-") {
+    return null;
+  }
+
+  let compact = raw.replace(/\s+/g, "");
+  const lastComma = compact.lastIndexOf(",");
+  const lastDot = compact.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    compact = lastComma > lastDot ? compact.replace(/\./g, "").replace(",", ".") : compact.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    compact = /,\d{1,2}$/.test(compact) ? compact.replace(",", ".") : compact.replace(/,/g, "");
+  }
+
+  const match = compact.match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sourcingFirstNumber(values) {
+  for (const value of values) {
+    const parsed = sourcingParseNumber(value);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+async function safeGetTab(tabId) {
+  try {
+    return await chrome.tabs.get(tabId);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function waitForTabCondition(tabId, predicate, timeoutMs = 45000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const tab = await safeGetTab(tabId);
+    if (!tab) {
+      return null;
+    }
+    if (predicate(tab)) {
+      return tab;
+    }
+    await delay(800);
+  }
+  return safeGetTab(tabId);
+}
+
+async function setAiPricePlatformCookie() {
+  if (!chrome.cookies?.set) {
+    return;
+  }
+  await chrome.cookies.set({
+    url: "https://www.aiprice.com/",
+    name: "selectedImageSearchPlatform",
+    value: "1688",
+    path: "/"
+  }).catch(() => null);
+}
+
+function buildAiPriceSearchUrl(productId, runId) {
+  const url = new URL(AIPRICE_IMAGE_SEARCH_URL);
+  if (productId) {
+    url.searchParams.set("obot_product_id", String(productId));
+  }
+  url.searchParams.set("obot_run", runId);
+  url.searchParams.set("obot_bridge", "1");
+  return url.toString();
+}
+
+async function openAiPriceWorkerTab(url) {
+  const existingTab = aiPriceWorkerTabId ? await safeGetTab(aiPriceWorkerTabId) : null;
+  if (existingTab?.id) {
+    const updatedTab = await chrome.tabs.update(existingTab.id, { url, active: false });
+    aiPriceWorkerTabId = updatedTab?.id || existingTab.id;
+    return updatedTab || existingTab;
+  }
+
+  const tab = await chrome.tabs.create({ url, active: false });
+  aiPriceWorkerTabId = tab?.id || null;
+  return tab;
+}
+
+async function ensureAiPriceSearchSubmitted(tabId, product) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [product.imageUrl, product.productId, product.aiPriceRunId],
+      func: (targetImageUrl, targetProductId, targetRunId) => {
+        document.cookie = "selectedImageSearchPlatform=1688; path=/; max-age=2592000";
+        sessionStorage.setItem("obotAiPriceRunId", String(targetRunId || ""));
+        sessionStorage.setItem("obotAiPriceProductId", String(targetProductId || ""));
+        sessionStorage.setItem("obotAiPriceImageUrl", String(targetImageUrl || ""));
+
+        const input = document.querySelector("#linkInput");
+        if (!input) {
+          return { ok: false, reason: "link_input_missing", url: location.href };
+        }
+
+        input.value = targetImageUrl;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+
+        const platform = Array.from(document.querySelectorAll(".platform-item")).find(
+          (item) => String(item.getAttribute("data-name") || "").toLowerCase() === "1688"
+        );
+        if (platform && !platform.classList.contains("active")) {
+          platform.click();
+        }
+
+        const button = document.querySelector(".link-section-option .submit-btn");
+        if (!button) {
+          return { ok: false, reason: "submit_button_missing", url: location.href };
+        }
+        setTimeout(() => button.click(), 200);
+        return { ok: true, url: location.href };
+      }
+    });
+    return results?.[0]?.result || { ok: false, reason: "no_script_result" };
+  } catch (_error) {
+    // If AiPrice auto-submit already redirected, script injection on this page can fail safely.
+    return { ok: false, reason: "script_injection_failed" };
+  }
+}
+
+async function parseAiPriceResultTab(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const parsePrice = (text) => {
+        const source = normalizeText(text);
+        const patterns = [
+          /(?:CN¥|CNY|RMB|¥|￥)\s*([0-9]+(?:[.,][0-9]+)?)/i,
+          /([0-9]+(?:[.,][0-9]+)?)\s*(?:元|¥|￥)/i
+        ];
+        for (const pattern of patterns) {
+          const match = source.match(pattern);
+          if (match) {
+            const parsed = Number(String(match[1]).replace(",", "."));
+            if (Number.isFinite(parsed)) {
+              return parsed;
+            }
+          }
+        }
+        return null;
+      };
+      const closestCard = (node) => {
+        let current = node;
+        for (let depth = 0; current && depth < 8; depth += 1) {
+          const text = normalizeText(current.innerText);
+          if (text && text.length < 2200 && parsePrice(text) !== null) {
+            return current;
+          }
+          current = current.parentElement;
+        }
+        return node;
+      };
+      const looksLikeLogin =
+        /log in|sign up|登录|注册|remember me/i.test(document.body?.innerText || "") &&
+        !!document.querySelector("input[name='identity'], input[type='password']");
+      if (looksLikeLogin) {
+        return {
+          status: "auth_required",
+          url: location.href,
+          title: document.title,
+          runId: sessionStorage.getItem("obotAiPriceRunId") || "",
+          productId: sessionStorage.getItem("obotAiPriceProductId") || "",
+          candidates: []
+        };
+      }
+
+      const anchors = Array.from(
+        document.querySelectorAll(
+          "a[href*='1688.com'], a[href*='detail.1688.com'], a[href*='m.1688.com/offer'], a[href*='offer/']"
+        )
+      );
+      const seen = new Set();
+      const candidates = [];
+      for (const anchor of anchors) {
+        const href = anchor.href;
+        if (!href || seen.has(href)) {
+          continue;
+        }
+        const card = closestCard(anchor);
+        const cardText = normalizeText(card?.innerText || anchor.innerText || "");
+        const price = parsePrice(cardText);
+        if (price === null) {
+          continue;
+        }
+        seen.add(href);
+        const image = card?.querySelector?.("img")?.src || anchor.querySelector?.("img")?.src || "";
+        const title =
+          normalizeText(anchor.getAttribute("title")) ||
+          normalizeText(anchor.innerText) ||
+          normalizeText(card?.querySelector?.("[title]")?.getAttribute("title")) ||
+          normalizeText(cardText.split(/[¥￥]/)[0]) ||
+          "AiPrice 1688 货源";
+        candidates.push({
+          title,
+          url: href,
+          image,
+          priceFrom: price,
+          priceTo: null,
+          seller: "AiPrice",
+          location: "",
+          searchMethod: "aiprice_image",
+          matchScore: 0.7,
+          titleScore: 0,
+          rawText: cardText.slice(0, 1200)
+        });
+        if (candidates.length >= 5) {
+          break;
+        }
+      }
+
+      return {
+        status: candidates.length ? "ok" : "no_candidates",
+        url: location.href,
+        title: document.title,
+        runId: sessionStorage.getItem("obotAiPriceRunId") || "",
+        productId: sessionStorage.getItem("obotAiPriceProductId") || "",
+        imageUrl: sessionStorage.getItem("obotAiPriceImageUrl") || "",
+        candidates
+      };
+    }
+  });
+  return results?.[0]?.result || null;
+}
+
+async function searchWithAiPriceBridge(product, reason = "") {
+  if (!product?.imageUrl) {
+    return { candidates: [], errors: ["AiPrice 图搜需要商品图片 URL"] };
+  }
+
+  await setAiPricePlatformCookie();
+  const runId = `obot-${product.productId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const searchUrl = buildAiPriceSearchUrl(product.productId, runId);
+  const tab = await openAiPriceWorkerTab(searchUrl);
+  if (!tab?.id) {
+    return { candidates: [], errors: ["无法打开 AiPrice 图搜页面"] };
+  }
+
+  const searchTab = await waitForTabCondition(
+    tab.id,
+    (currentTab) => {
+      const currentUrl = String(currentTab.url || "");
+      return (
+        currentUrl.includes("/member/login") ||
+        (currentUrl.includes("/img/search") &&
+          currentUrl.includes(`obot_run=${encodeURIComponent(runId)}`) &&
+          currentTab.status === "complete")
+      );
+    },
+    45000
+  );
+  if (String(searchTab?.url || "").includes("/member/login")) {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => null);
+    return {
+      candidates: [],
+      errors: ["AiPrice 需要登录后才能图搜，已打开登录页，请登录后重试。"],
+      searchUrl: searchTab.url,
+      tabId: tab.id
+    };
+  }
+  if (!String(searchTab?.url || "").includes(`obot_run=${encodeURIComponent(runId)}`)) {
+    return {
+      candidates: [],
+      errors: ["AiPrice 工作页没有加载到当前 SKU 的搜索批次，已停止避免复用旧价格。"],
+      searchUrl,
+      tabId: tab.id
+    };
+  }
+
+  const submitResult = await ensureAiPriceSearchSubmitted(tab.id, {
+    ...product,
+    aiPriceRunId: runId
+  });
+  if (!submitResult?.ok) {
+    return {
+      candidates: [],
+      errors: [`AiPrice 图搜提交失败: ${submitResult?.reason || "unknown_error"}`],
+      searchUrl,
+      tabId: tab.id
+    };
+  }
+
+  await waitForTabCondition(
+    tab.id,
+    (nextTab) => {
+      const nextUrl = String(nextTab.url || "");
+      return (
+        nextUrl.includes("/member/login") ||
+        (nextUrl.includes("/img/search_detail") && nextTab.status === "complete")
+      );
+    },
+    45000
+  );
+
+  let parsed = null;
+  let parseError = null;
+  const parseStartedAt = Date.now();
+  while (Date.now() - parseStartedAt < 60000) {
+    try {
+      parsed = await parseAiPriceResultTab(tab.id);
+      const parsedRunMatches = String(parsed?.runId || "") === runId;
+      if (parsed?.status === "auth_required" || (parsedRunMatches && parsed?.status === "ok")) {
+        break;
+      }
+    } catch (error) {
+      parseError = error;
+    }
+    await delay(2000);
+  }
+
+  if (!parsed && parseError) {
+    return {
+      candidates: [],
+      errors: [`AiPrice 图搜页已打开，但结果解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`],
+      searchUrl,
+      tabId: tab.id
+    };
+  }
+
+  if (parsed?.status === "auth_required") {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => null);
+    return {
+      candidates: [],
+      errors: ["AiPrice 需要登录后才能查看图搜结果，已打开登录/结果页，请登录后重试。"],
+      searchUrl: parsed.url || searchUrl,
+      tabId: tab.id
+    };
+  }
+
+  const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+  if (String(parsed?.runId || "") !== runId) {
+    return {
+      candidates: [],
+      errors: ["AiPrice 结果页不是当前 SKU 的搜索批次，已停止避免复用上一件商品价格。"],
+      searchUrl: parsed?.url || searchUrl,
+      tabId: tab.id
+    };
+  }
+  if (!candidates.length) {
+    return {
+      candidates: [],
+      errors: [
+        `AiPrice 图搜未解析到价格${reason ? `（触发原因: ${reason}）` : ""}，已打开页面可手动查看。`
+      ],
+      searchUrl: parsed?.url || searchUrl,
+      tabId: tab.id
+    };
+  }
+
+  return {
+    candidates,
+    errors: [],
+    searchUrl: parsed?.url || searchUrl,
+    tabId: tab.id
+  };
+}
+
+function sourcingProductFromPayload(item) {
+  const productId = Number(sourcingFirstNumber([item?.product_id, item?.productId]) || 0);
+  if (!Number.isFinite(productId) || productId <= 0) {
+    return null;
+  }
+
+  return {
+    productId,
+    title: normalizeSourcingText(item?.title || item?.subtitle || `SKU ${productId}`),
+    imageUrl: normalizeSourcingText(item?.image_url || item?.imageUrl),
+    productUrl: normalizeSourcingText(item?.product_url || item?.productUrl),
+    followPrice: sourcingFirstNumber([item?.follow_price, item?.followPrice]),
+    marketPrice: sourcingFirstNumber([item?.market_price, item?.marketPrice]),
+    minFollowPrice: sourcingFirstNumber([item?.min_follow_price, item?.minFollowPrice]),
+    weightG: sourcingFirstNumber([item?.weight_g, item?.weightG]),
+    monthlySales: sourcingFirstNumber([item?.monthly_sales, item?.monthlySales])
+  };
+}
+
+async function compareOneAiPriceImageProduct(product, maxCandidates) {
+  const errors = [];
+  const candidates = [];
+
+  try {
+    const aiPriceResult = await searchWithAiPriceBridge(product, "direct_aiprice_image_search");
+    candidates.push(...aiPriceResult.candidates);
+    errors.push(...(aiPriceResult.errors || []));
+  } catch (error) {
+    errors.push(`AiPrice 图搜失败: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const deduped = new Map();
+  for (const candidate of candidates) {
+    const key = String(candidate.offerId || candidate.url || candidate.title || "");
+    if (!key) {
+      continue;
+    }
+    const existing = deduped.get(key);
+    if (!existing || (candidate.matchScore || 0) > (existing.matchScore || 0)) {
+      deduped.set(key, candidate);
+    }
+  }
+
+  const sortedCandidates = Array.from(deduped.values())
+    .sort((left, right) => {
+      const scoreDiff = (right.matchScore || 0) - (left.matchScore || 0);
+      if (Math.abs(scoreDiff) > 0.0001) {
+        return scoreDiff;
+      }
+      const leftPrice = left.priceFrom ?? Number.POSITIVE_INFINITY;
+      const rightPrice = right.priceFrom ?? Number.POSITIVE_INFINITY;
+      return leftPrice - rightPrice;
+    })
+    .slice(0, maxCandidates);
+  const best = sortedCandidates[0] || null;
+
+  return {
+    productId: product.productId,
+    status: best ? "ok" : "not_found",
+    query: {
+      title: product.title,
+      imageUrl: product.imageUrl,
+      productUrl: product.productUrl
+    },
+    candidates: sortedCandidates,
+    bestCandidate: best,
+    profitInputs: {
+      ozonFollowPrice: product.followPrice,
+      ozonMarketPrice: product.marketPrice,
+      ozonMinFollowPrice: product.minFollowPrice,
+      purchasePriceCny: best?.priceFrom ?? null,
+      minOrderQuantity: best?.minOrderQuantity ?? null,
+      unitWeight1688Kg: best?.unitWeight ?? null,
+      weightG: product.weightG,
+      monthlySales: product.monthlySales,
+      formulaReady: false
+    },
+    errors
+  };
+}
+
+async function compareAiPriceImageSources(items, maxCandidates = 5) {
+  const products = (Array.isArray(items) ? items : [])
+    .map((item) => sourcingProductFromPayload(item))
+    .filter(Boolean);
+  const candidateLimit = Math.min(Math.max(Number(maxCandidates) || 5, 1), 10);
+  if (!products.length) {
+    return {
+      items: [],
+      meta: {
+        source: "aiprice_image_bridge",
+        maxCandidates: candidateLimit,
+        local: true,
+        generatedAt: nowIso()
+      }
+    };
+  }
+
+  const results = [];
+  const concurrency = 1;
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < products.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await compareOneAiPriceImageProduct(products[index], candidateLimit);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, products.length) }, () => worker()));
+
+  return {
+    items: results,
+    meta: {
+      source: "aiprice_image_bridge",
+      maxCandidates: candidateLimit,
+      local: true,
+      generatedAt: nowIso()
+    }
+  };
 }
 
 async function getCloudFollowDeviceId() {
@@ -1796,32 +2318,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === "compare-1688-sourcing") {
       try {
-        const session = await getHdSession(false);
-        if (!session) {
-          sendResponse({
-            ok: false,
-            code: "cloud_auth_required",
-            error: "请先登录 SaaS 后台，再回到 Ozon 页面刷新店铺。",
-            loginUrl: buildCloudLoginUrl()
-          });
-          return;
-        }
-
         const payloadItems = Array.isArray(message.items) ? message.items : [];
-        const { data } = await fetchHdJsonSafe("/api/v1/sourcing/1688/compare", {
-          method: "POST",
-          body: JSON.stringify({
-            items: payloadItems,
-            max_candidates: Math.min(Math.max(Number(message.maxCandidates) || 5, 1), 10)
-          })
-        });
-        sendResponse({ ok: true, result: data, session });
+        const data = await compareAiPriceImageSources(payloadItems, message.maxCandidates);
+        sendResponse({ ok: true, result: data, local: true });
       } catch (error) {
         sendResponse({
           ok: false,
-          code: error?.code || "cloud_request_failed",
+          code: error?.code || "aiprice_image_search_failed",
           error: error instanceof Error ? error.message : String(error),
-          loginUrl: buildCloudLoginUrl()
+          loginUrl: error?.loginUrl || AIPRICE_IMAGE_SEARCH_URL
         });
       }
       return;
@@ -1947,7 +2452,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === "get-seller-analytics") {
       const records = await getSellerAnalytics(message.productIds || [], {
-        fetchMissing: !!message.fetchMissing
+        fetchMissing: !!message.fetchMissing,
+        forceRefresh: !!message.forceRefresh
       });
       sendResponse({ ok: true, records });
       return;
@@ -1962,6 +2468,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === aiPriceWorkerTabId) {
+    aiPriceWorkerTabId = null;
+  }
   void removeJob(tabId);
 });
 
