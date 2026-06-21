@@ -1,0 +1,2987 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>商品图翻译 OCR</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --brand: #0f766e;
+      --brand-strong: #0d9488;
+      --text: #142033;
+      --muted: #6b7a90;
+      --line: #dbe5f0;
+      --soft: #f5f8fb;
+      --danger: #ef4444;
+      --ok: #16a34a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(135deg, #f8fbff 0%, #fffaf2 54%, #f7fbf8 100%);
+      color: var(--text);
+      font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    button,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .page {
+      width: min(1680px, calc(100vw - 48px));
+      margin: 32px auto;
+    }
+
+    .hero,
+    .panel {
+      border: 1px solid rgb(219 229 240 / 86%);
+      border-radius: 18px;
+      background: rgb(255 255 255 / 92%);
+      box-shadow: 0 18px 50px rgb(30 45 75 / 8%);
+    }
+
+    .hero {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .eyebrow {
+      margin-bottom: 8px;
+      color: var(--brand);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 38px;
+      line-height: 1.08;
+    }
+
+    .status-pill {
+      flex: none;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #eaf8f6;
+      color: var(--brand);
+      font-weight: 800;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 20px;
+    }
+
+    .panel {
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .panel-body {
+      padding: 20px;
+    }
+
+    .drop-zone {
+      display: grid;
+      place-items: center;
+      min-height: 210px;
+      border: 2px dashed #9bd3cc;
+      border-radius: 16px;
+      background: #f7fffd;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .drop-zone.dragging {
+      border-color: var(--brand);
+      background: #ecfdf5;
+    }
+
+    .upload-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 64px;
+      height: 64px;
+      margin-bottom: 12px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #f59e0b, #38bdf8);
+      color: white;
+      font-weight: 900;
+    }
+
+    .upload-title {
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .upload-hint {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .field {
+      margin-top: 18px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 8px;
+      color: #53647b;
+      font-weight: 800;
+    }
+
+    select {
+      width: 100%;
+      height: 46px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      color: var(--text);
+      outline: none;
+    }
+
+    .prompt-input {
+      width: 100%;
+      min-height: 118px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      color: var(--text);
+      line-height: 1.55;
+      outline: none;
+      resize: vertical;
+    }
+
+    .bridge-status {
+      min-height: 20px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .bridge-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .image-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 310px;
+      margin-top: 18px;
+      overflow: auto;
+    }
+
+    .image-row {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+    }
+
+    .image-row img {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      object-fit: cover;
+    }
+
+    .image-row strong,
+    .image-row span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .image-row span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .remove-button {
+      border: 0;
+      background: transparent;
+      color: var(--danger);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .actions button,
+    .bridge-actions button,
+    .card-footer button,
+    .card-actions button {
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .actions button.primary {
+      border-color: var(--brand-strong);
+      background: var(--brand-strong);
+      color: white;
+    }
+
+    .bridge-actions button.primary {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: white;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .result-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 520px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .image-card {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: white;
+    }
+
+    .card-top,
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .card-top {
+      margin-bottom: 14px;
+    }
+
+    .card-top strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: none;
+    }
+
+    .card-actions button {
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 13px;
+    }
+
+    .badge {
+      flex: none;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .badge.done {
+      background: #e9f9ef;
+      color: var(--ok);
+    }
+
+    .badge.error {
+      background: #fff1f2;
+      color: var(--danger);
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .single-editor {
+      display: block;
+    }
+
+    .pane-title {
+      margin-bottom: 8px;
+      color: #52637a;
+      font-weight: 800;
+    }
+
+    .stage {
+      display: grid;
+      place-items: center;
+      min-height: 520px;
+      overflow: auto;
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      background:
+        linear-gradient(45deg, rgb(0 0 0 / 3%) 25%, transparent 25%),
+        linear-gradient(-45deg, rgb(0 0 0 / 3%) 25%, transparent 25%),
+        #fff;
+      background-size: 24px 24px;
+    }
+
+    .edit-shell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: max-content;
+      max-width: none;
+    }
+
+    .canvas-toolbar {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid #cdd8e8;
+      border-radius: 999px;
+      background: rgb(255 255 255 / 94%);
+      box-shadow: 0 8px 20px rgb(15 23 42 / 10%);
+    }
+
+    .canvas-toolbar button {
+      min-width: 30px;
+      height: 28px;
+      border: 0;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .canvas-toolbar .zoom-value {
+      min-width: 44px;
+      color: #334155;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .canvas-toolbar .shape-add-button {
+      padding: 0 10px;
+      min-width: auto;
+      background: #ecfdf5;
+      color: var(--brand);
+    }
+
+    .stage img {
+      max-width: 100%;
+      max-height: 620px;
+      object-fit: contain;
+    }
+
+    .edit-stage {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: clamp(600px, 72vh, 920px);
+      padding: 72px 24px 28px;
+    }
+
+    .edit-canvas {
+      position: relative;
+      container-type: inline-size;
+      flex: none;
+      width: var(--canvas-preview-width, 380px);
+      aspect-ratio: var(--canvas-ratio, 1 / 1);
+      overflow: visible;
+      line-height: 1.15;
+      cursor: default;
+    }
+
+    .edit-canvas .edit-bg {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      max-height: none;
+      object-fit: contain;
+    }
+
+    .text-layer {
+      position: absolute;
+      min-width: 20px;
+      min-height: 18px;
+      white-space: pre-wrap;
+      cursor: move;
+      user-select: none;
+      overflow: visible;
+      text-shadow: 0 1px 1px rgb(255 255 255 / 55%);
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .content-shell {
+      position: relative;
+      display: inline-block;
+      width: var(--content-width, max-content);
+      max-width: 100%;
+      padding: 0;
+      z-index: 2;
+      border: 1px dashed transparent;
+      border-radius: 4px;
+      cursor: move;
+      line-height: 0;
+      pointer-events: auto;
+    }
+
+    .layer-content {
+      display: inline-block;
+      width: max-content;
+      max-width: 100%;
+      cursor: move;
+      pointer-events: auto;
+      text-align: inherit;
+      line-height: 1.15;
+    }
+
+    .layer-content.inline-editing {
+      min-width: 24px;
+      padding: 1px 3px;
+      border-radius: 3px;
+      background: rgb(255 255 255 / 78%);
+      outline: 2px solid rgb(37 99 235 / 30%);
+      cursor: text;
+      user-select: text;
+      white-space: pre-wrap;
+    }
+
+    .layer-line {
+      display: block;
+      white-space: pre;
+    }
+
+    .text-handle-box {
+      position: absolute;
+      top: 0;
+      display: none;
+      width: var(--content-width, 20px);
+      height: var(--content-height, 18px);
+      pointer-events: none;
+    }
+
+    .shape-object {
+      position: absolute;
+      z-index: 1;
+      border: 1px dashed transparent;
+      cursor: move;
+      pointer-events: auto;
+    }
+
+    .shape-object.active {
+      border-color: #0d9488;
+      box-shadow: 0 0 0 2px rgb(13 148 136 / 14%);
+    }
+
+    .text-layer.active .content-shell {
+      border-color: #2563eb;
+      background: rgb(37 99 235 / 8%);
+      box-shadow: 0 0 0 2px rgb(37 99 235 / 12%);
+    }
+
+    .quick-toolbar,
+    .shape-toolbar {
+      position: absolute;
+      left: calc(100% + 6px);
+      top: 0;
+      display: none;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid #bfd0ea;
+      border-radius: 999px;
+      background: rgb(255 255 255 / 96%);
+      box-shadow: 0 8px 20px rgb(15 23 42 / 16%);
+      white-space: nowrap;
+      z-index: 5;
+      pointer-events: auto;
+    }
+
+    .text-layer.active .quick-toolbar {
+      display: flex;
+    }
+
+    .text-layer.active .text-handle-box {
+      display: block;
+    }
+
+    .shape-object.active .shape-toolbar {
+      display: flex;
+    }
+
+    .quick-toolbar button,
+    .shape-toolbar button {
+      min-width: 30px;
+      height: 26px;
+      border: 0;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .quick-toolbar button.active {
+      background: #dbeafe;
+      color: #1e40af;
+      box-shadow: inset 0 0 0 1px rgb(37 99 235 / 18%);
+    }
+
+    .quick-color {
+      width: 30px;
+      height: 26px;
+      padding: 2px;
+      border: 0;
+      border-radius: 999px;
+      background: #eff6ff;
+      cursor: pointer;
+    }
+
+    .quick-color::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+
+    .quick-color::-webkit-color-swatch {
+      border: 1px solid rgb(15 23 42 / 16%);
+      border-radius: 999px;
+    }
+
+    .quick-size {
+      width: 52px;
+      height: 26px;
+      padding: 0 6px;
+      border: 0;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1f3b64;
+      font-size: 12px;
+      font-weight: 900;
+      outline: none;
+    }
+
+    .quick-size::-webkit-outer-spin-button,
+    .quick-size::-webkit-inner-spin-button {
+      margin: 0;
+    }
+
+    .quick-toolbar button.danger {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    .shape-toolbar button.danger {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    .resize-handle {
+      position: absolute;
+      display: none;
+      width: 10px;
+      height: 10px;
+      border: 2px solid #2563eb;
+      border-radius: 999px;
+      background: white;
+      box-shadow: 0 1px 4px rgb(15 23 42 / 18%);
+      z-index: 3;
+      pointer-events: auto;
+    }
+
+    .text-layer.active .resize-handle,
+    .shape-object.active .resize-handle {
+      display: block;
+    }
+
+    .resize-handle[data-handle="n"] {
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      cursor: ns-resize;
+    }
+
+    .resize-handle[data-handle="s"] {
+      bottom: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      cursor: ns-resize;
+    }
+
+    .resize-handle[data-handle="e"] {
+      top: 50%;
+      right: -6px;
+      transform: translateY(-50%);
+      cursor: ew-resize;
+    }
+
+    .resize-handle[data-handle="w"] {
+      top: 50%;
+      left: -6px;
+      transform: translateY(-50%);
+      cursor: ew-resize;
+    }
+
+    .resize-handle[data-handle="nw"] {
+      top: -6px;
+      left: -6px;
+      cursor: nwse-resize;
+    }
+
+    .resize-handle[data-handle="ne"] {
+      top: -6px;
+      right: -6px;
+      cursor: nesw-resize;
+    }
+
+    .resize-handle[data-handle="sw"] {
+      bottom: -6px;
+      left: -6px;
+      cursor: nesw-resize;
+    }
+
+    .resize-handle[data-handle="se"] {
+      right: -6px;
+      bottom: -6px;
+      cursor: nwse-resize;
+    }
+
+    .editor-tools {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #f8fbff;
+    }
+
+    .editor-tools textarea {
+      grid-column: 1 / -1;
+      min-height: 74px;
+      resize: vertical;
+    }
+
+    .editor-tools label {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      color: #53647b;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .editor-tools input,
+    .editor-tools select,
+    .editor-tools textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      color: var(--text);
+      outline: none;
+    }
+
+    .editor-tools input,
+    .editor-tools select {
+      height: 38px;
+      padding: 0 9px;
+    }
+
+    .editor-tools textarea {
+      padding: 9px;
+      font: inherit;
+    }
+
+    .editor-tools .wide {
+      grid-column: span 2;
+    }
+
+    .style-button-row,
+    .shape-library {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .style-button-row button,
+    .shape-template {
+      height: 38px;
+      min-width: 42px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    .style-button-row button.active,
+    .shape-template.active {
+      border-color: var(--brand-strong);
+      background: #ecfdf5;
+      color: var(--brand);
+      box-shadow: 0 0 0 2px rgb(13 148 136 / 10%);
+    }
+
+    .shape-library-wrap {
+      grid-column: 1 / -1;
+      padding-top: 4px;
+      border-top: 1px dashed #cfdae8;
+    }
+
+    .shape-template {
+      position: relative;
+      width: 58px;
+    }
+
+    .shape-template::before {
+      content: "";
+      display: block;
+      width: 28px;
+      height: 18px;
+      margin: 0 auto;
+      background: #ead7bd;
+      border: 1px solid #c3a98a;
+    }
+
+    .shape-template[data-template="rect"]::before {
+      border-radius: 2px;
+    }
+
+    .shape-template[data-template="round"]::before {
+      border-radius: 8px;
+    }
+
+    .shape-template[data-template="pill"]::before {
+      width: 36px;
+      border-radius: 999px;
+    }
+
+    .shape-template[data-template="circle"]::before {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+    }
+
+    .shape-template[data-template="line"]::before {
+      width: 36px;
+      height: 4px;
+      margin-top: 7px;
+      border-radius: 999px;
+    }
+
+    .editor-delete-button {
+      align-self: end;
+      height: 38px;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      background: #fff5f5;
+      color: var(--danger);
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    body.fullscreen-open {
+      overflow: hidden;
+    }
+
+    body.fullscreen-open::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 900;
+      background: rgb(15 23 42 / 55%);
+      backdrop-filter: blur(2px);
+    }
+
+    .image-card.fullscreen-card {
+      position: fixed;
+      inset: 18px;
+      z-index: 901;
+      margin: 0;
+      overflow: auto;
+      box-shadow: 0 28px 90px rgb(15 23 42 / 35%);
+    }
+
+    .image-card.fullscreen-card .stage {
+      min-height: calc(100vh - 190px);
+      max-height: none;
+    }
+
+    .fullscreen-close-button {
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid #cdd8e8;
+      border-radius: 999px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    .compare-modal {
+      position: fixed;
+      inset: 24px;
+      z-index: 930;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 28px 90px rgb(15 23 42 / 35%);
+    }
+
+    .compare-modal::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background: rgb(15 23 42 / 48%);
+      backdrop-filter: blur(2px);
+    }
+
+    .compare-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-weight: 900;
+    }
+
+    .compare-modal-header button {
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    .compare-modal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .compare-modal-pane {
+      display: flex;
+      min-height: 0;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .compare-modal-pane img {
+      width: 100%;
+      min-height: 0;
+      flex: 1;
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      object-fit: contain;
+      background:
+        linear-gradient(45deg, rgb(0 0 0 / 3%) 25%, transparent 25%),
+        linear-gradient(-45deg, rgb(0 0 0 / 3%) 25%, transparent 25%),
+        #fff;
+      background-size: 24px 24px;
+    }
+
+    .placeholder {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .card-footer {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+    }
+
+    @media (max-width: 1020px) {
+      .page {
+        width: min(100vw - 24px, 900px);
+        margin: 16px auto;
+      }
+
+      .layout,
+      .compare {
+        grid-template-columns: 1fr;
+      }
+
+      .editor-tools {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .hero,
+      .card-top,
+      .card-footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">图片工坊</div>
+        <h1>商品图翻译</h1>
+      </div>
+      <div class="status-pill" id="serverStatus">检测服务中</div>
+    </section>
+
+    <section class="layout">
+      <aside class="panel">
+        <div class="panel-header">上传图片</div>
+        <div class="panel-body">
+          <label class="drop-zone" id="dropZone">
+            <input id="fileInput" type="file" accept="image/*" multiple>
+            <div>
+              <div class="upload-icon">IMG</div>
+              <div class="upload-title">上传商品图片</div>
+              <div class="upload-hint">可一次选择多张，也可以拖进来。</div>
+            </div>
+          </label>
+
+          <div class="field">
+            <label for="language">目标语言</label>
+            <select id="language">
+              <option value="ru">俄语</option>
+              <option value="en">英语</option>
+              <option value="es">西班牙语</option>
+              <option value="de">德语</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="translationMode">翻译模式</label>
+            <select id="translationMode">
+              <option value="product_short">商品短文案</option>
+              <option value="direct">直译</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="chatgptPrompt">网页版 GPT 提示词</label>
+            <textarea
+              class="prompt-input"
+              id="chatgptPrompt"
+              placeholder="例如：根据这张商品图生成一张俄语电商主图，保留商品主体，替换中文文案，画面干净专业。"
+            ></textarea>
+            <div class="field">
+              <label for="chatgptBrowserMode">GPT 浏览器模式</label>
+              <select id="chatgptBrowserMode">
+                <option value="visible">当前 9222 Chrome</option>
+              </select>
+            </div>
+            <div class="bridge-status" id="chatgptStatus">网页版 GPT：检测中</div>
+            <div class="bridge-actions">
+              <button id="openChatgptButton" type="button">打开 ChatGPT</button>
+              <button class="primary" id="chatgptButton" disabled type="button">发送 GPT</button>
+            </div>
+          </div>
+
+          <div class="image-list" id="imageList"></div>
+
+          <div class="actions">
+            <button class="primary" id="processButton" disabled type="button">批量生成</button>
+            <button id="downloadAllButton" disabled type="button">下载全部</button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span>预览结果</span>
+          <span class="badge" id="counter">0 张</span>
+        </div>
+        <div class="panel-body">
+          <div class="empty" id="emptyState">上传图片后开始 OCR 识别和文字修补</div>
+          <div class="result-grid" id="resultGrid"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      images: [],
+      processing: false,
+      fullscreenItemId: '',
+      compareItemId: '',
+      selectedShapeTemplate: 'round',
+    }
+
+    let dragState = null
+
+    const fileInput = document.querySelector('#fileInput')
+    const dropZone = document.querySelector('#dropZone')
+    const imageList = document.querySelector('#imageList')
+    const resultGrid = document.querySelector('#resultGrid')
+    const emptyState = document.querySelector('#emptyState')
+    const processButton = document.querySelector('#processButton')
+    const downloadAllButton = document.querySelector('#downloadAllButton')
+    const language = document.querySelector('#language')
+    const translationMode = document.querySelector('#translationMode')
+    const chatgptPrompt = document.querySelector('#chatgptPrompt')
+    const chatgptBrowserMode = document.querySelector('#chatgptBrowserMode')
+    const chatgptStatus = document.querySelector('#chatgptStatus')
+    const openChatgptButton = document.querySelector('#openChatgptButton')
+    const chatgptButton = document.querySelector('#chatgptButton')
+    const counter = document.querySelector('#counter')
+    const serverStatus = document.querySelector('#serverStatus')
+
+    const fontChoices = [
+      { value: 'Arial, sans-serif', label: 'Arial' },
+      { value: "'Trebuchet MS', Arial, sans-serif", label: 'Trebuchet' },
+      { value: 'Verdana, Arial, sans-serif', label: 'Verdana' },
+      { value: 'Georgia, serif', label: 'Georgia' },
+      { value: "'Times New Roman', serif", label: 'Times' },
+      { value: "'Arial Black', Arial, sans-serif", label: 'Arial Black' },
+    ]
+
+    function createId() {
+      if (crypto.randomUUID) return crypto.randomUUID()
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    }
+
+    function statusText(item) {
+      if (item.processing && item.gptStage) return item.gptStage
+      if (item.processing) return '处理中'
+      if (item.status === 'done') return '已完成'
+      if (item.status === 'error') return '失败'
+      return '待处理'
+    }
+
+    function updateControls() {
+      processButton.disabled = !state.images.length || state.processing
+      processButton.textContent = state.processing ? '处理中' : `批量生成${state.images.length ? ` (${state.images.length})` : ''}`
+      if (chatgptButton) {
+        const hasPrompt = Boolean(chatgptPrompt?.value.trim())
+        chatgptButton.disabled = !state.images.length || state.processing || !hasPrompt
+        chatgptButton.textContent = state.processing ? 'GPT处理中' : `发送 GPT${state.images.length ? ` (${state.images.length})` : ''}`
+      }
+      downloadAllButton.disabled = !state.images.some((item) => item.backgroundUrl || item.resultUrl)
+      counter.textContent = `${state.images.length} 张`
+      emptyState.style.display = state.images.length ? 'none' : 'grid'
+    }
+
+    function render() {
+      imageList.innerHTML = ''
+      resultGrid.innerHTML = ''
+      document.body.classList.toggle('fullscreen-open', Boolean(state.fullscreenItemId))
+
+      for (const item of state.images) {
+        const row = document.createElement('div')
+        row.className = 'image-row'
+        row.innerHTML = `
+          <img src="${item.sourceUrl}" alt="">
+          <div>
+            <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+            <span>${item.width} x ${item.height}px</span>
+          </div>
+          <button class="remove-button" type="button">删除</button>
+        `
+        row.querySelector('button').addEventListener('click', () => removeImage(item.id))
+        imageList.appendChild(row)
+
+        const card = document.createElement('article')
+        card.className = `image-card${state.fullscreenItemId === item.id ? ' fullscreen-card' : ''}`
+        const badgeClass = item.status === 'done' ? 'done' : item.status === 'error' ? 'error' : ''
+        const meta = item.status === 'error'
+          ? escapeHtml(item.error || '处理失败')
+          : item.engine === 'chatgpt-web'
+            ? `网页版 GPT${item.chatgptText ? ` · ${escapeHtml(item.chatgptText).slice(0, 180)}` : ''}`
+            : `${item.layers.length ? `可编辑 ${item.layers.length} 处文字` : item.regions.length ? `已识别 ${item.regions.length} 处文字` : '未检测到文字'}${item.engine ? ` · ${escapeHtml(item.engine)}` : ''}`
+        const resultPane = item.backgroundUrl
+          ? renderEditableStage(item)
+          : item.resultUrl
+            ? `<img src="${item.resultUrl}" alt="译图">`
+            : `<span class="placeholder">${item.processing ? '正在处理...' : '等待生成'}</span>`
+        const editorTools = item.backgroundUrl ? renderEditorTools(item) : ''
+
+        card.innerHTML = `
+          <div class="card-top">
+            <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+            <div class="card-actions">
+              <button type="button" data-open-compare ${item.backgroundUrl || item.resultUrl ? '' : 'disabled'}>对比原图</button>
+              ${state.fullscreenItemId === item.id ? '<button class="fullscreen-close-button" type="button" data-close-fullscreen>退出全屏</button>' : ''}
+              <span class="badge ${badgeClass}">${statusText(item)}</span>
+            </div>
+          </div>
+          <div class="single-editor">
+            <div class="stage edit-stage">${resultPane}</div>
+          </div>
+          ${editorTools}
+          <div class="card-footer">
+            <div class="meta">${meta}</div>
+            <button type="button" ${item.backgroundUrl || item.resultUrl ? '' : 'disabled'}>下载</button>
+          </div>
+        `
+        bindCardEvents(card, item)
+        resultGrid.appendChild(card)
+      }
+      renderCompareModal()
+      updateControls()
+    }
+
+    function renderCompareModal() {
+      if (!state.compareItemId) return
+      const item = state.images.find((entry) => entry.id === state.compareItemId)
+      if (!item) {
+        state.compareItemId = ''
+        return
+      }
+      const modal = document.createElement('div')
+      modal.className = 'compare-modal'
+      modal.innerHTML = `
+        <div class="compare-modal-header">
+          <span>${escapeHtml(item.name)} · 原图对比</span>
+          <button type="button" data-close-compare>关闭</button>
+        </div>
+        <div class="compare-modal-grid">
+          <div class="compare-modal-pane">
+            <div class="pane-title">原图</div>
+            <img src="${item.sourceUrl}" alt="原图">
+          </div>
+          <div class="compare-modal-pane">
+            <div class="pane-title">修改图</div>
+            <img src="${item.compareUrl || item.backgroundUrl || item.resultUrl}" alt="修改图">
+          </div>
+        </div>
+      `
+      modal.querySelector('[data-close-compare]').addEventListener('click', () => {
+        state.compareItemId = ''
+        render()
+      })
+      resultGrid.appendChild(modal)
+    }
+
+    function renderEditableStage(item) {
+      return `
+        <div class="canvas-toolbar">
+          <button type="button" data-zoom-action="out" title="缩小画布">-</button>
+          <span class="zoom-value">${Math.round((item.zoom || 1) * 100)}%</span>
+          <button type="button" data-zoom-action="in" title="放大画布">+</button>
+          <button type="button" data-zoom-action="reset" title="恢复 100%">100%</button>
+          <button class="shape-add-button" type="button" data-add-shape title="添加独立图形">加图形</button>
+        </div>
+        <div class="edit-shell" data-edit-shell="${item.id}">
+          <div class="edit-canvas" data-canvas-id="${item.id}" style="--canvas-preview-width:${canvasDisplayWidth(item)}px;--canvas-ratio:${item.width}/${item.height}">
+            <img class="edit-bg" src="${item.backgroundUrl}" alt="已修补底图">
+            ${(item.shapes || []).map((shape) => renderShapeObject(item, shape)).join('')}
+            ${item.layers.map((layer) => renderTextLayer(item, layer)).join('')}
+          </div>
+        </div>
+      `
+    }
+
+    function renderShapeObject(item, shape) {
+      const active = item.selectedShapeId === shape.id ? ' active' : ''
+      return `
+        <div
+          class="shape-object${active}"
+          data-shape-id="${shape.id}"
+          style="${shapeObjectStyle(item, shape)}"
+        >
+          ${active ? renderResizeHandles() : ''}
+          ${active ? renderShapeToolbar() : ''}
+        </div>
+      `
+    }
+
+    function renderTextLayer(item, layer) {
+      const active = item.selectedLayerId === layer.id ? ' active' : ''
+      const editing = item.editingLayerId === layer.id
+      const textLayout = layerTextLayout(layer)
+      const textContent = editing
+        ? `<span class="layer-content inline-editing" contenteditable="true" spellcheck="false" data-inline-text="${layer.id}">${escapeHtml(layer.text)}</span>`
+        : `<span class="layer-content">${renderLayerLines(textLayout.lines)}</span>`
+      return `
+        <div
+          class="text-layer${active}"
+          data-layer-id="${layer.id}"
+          style="${layerStyle(item, layer)}"
+        ><span class="content-shell" style="--content-width:${contentWidthStyle(item, textLayout.width)}">${textContent}</span>
+          ${active ? `<span class="text-handle-box" style="${textHandleBoxStyle(item, layer, textLayout)}">${renderResizeHandles()}${renderQuickToolbar(layer)}</span>` : ''}
+        </div>
+      `
+    }
+
+    function renderQuickToolbar(layer) {
+      return `
+        <span class="quick-toolbar">
+          <input class="quick-color" type="color" value="${escapeHtml(layer.color)}" data-quick-color title="文字颜色">
+          <input class="quick-size" type="number" min="6" max="220" step="1" value="${round(layer.fontSize)}" data-quick-font-size title="字号">
+          <button class="${Number(layer.fontWeight) >= 700 ? 'active' : ''}" type="button" data-quick="bold" title="加粗">B</button>
+          <button class="${layer.fontStyle === 'italic' ? 'active' : ''}" type="button" data-quick="italic" title="斜体">I</button>
+          <button class="${layer.textDecoration === 'underline' ? 'active' : ''}" type="button" data-quick="underline" title="下划线">U</button>
+          <button class="danger" type="button" data-quick="delete" title="删除文字">删</button>
+        </span>
+      `
+    }
+
+    function renderShapeToolbar() {
+      return `
+        <span class="shape-toolbar">
+          <button class="danger" type="button" data-shape-quick="delete" title="删除图形">删</button>
+        </span>
+      `
+    }
+
+    function renderResizeHandles() {
+      return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+        .map((handle) => `<span class="resize-handle" data-handle="${handle}"></span>`)
+        .join('')
+    }
+
+    function renderEditorTools(item) {
+      const layer = selectedLayer(item)
+      const shape = selectedShape(item)
+      if (shape) {
+        return `
+          <div class="editor-tools" data-tools-for="${item.id}">
+            <label>
+              图形
+              <select data-shape-tool="type">
+                ${shapeOption('rect', '矩形', shape.type)}
+                ${shapeOption('round', '圆角', shape.type)}
+                ${shapeOption('pill', '胶囊', shape.type)}
+                ${shapeOption('circle', '圆形', shape.type)}
+                ${shapeOption('line', '线条', shape.type)}
+              </select>
+            </label>
+            <label>
+              颜色
+              <input data-shape-tool="color" type="color" value="${escapeHtml(shape.color)}">
+            </label>
+            <label>
+              透明
+              <input data-shape-tool="opacity" type="number" min="0" max="1" step="0.05" value="${Number(shape.opacity).toFixed(2)}">
+            </label>
+            <label>
+              X
+              <input data-shape-tool="x" type="number" min="0" max="${item.width}" step="1" value="${round(shape.x)}">
+            </label>
+            <label>
+              Y
+              <input data-shape-tool="y" type="number" min="0" max="${item.height}" step="1" value="${round(shape.y)}">
+            </label>
+            <label>
+              宽
+              <input data-shape-tool="width" type="number" min="10" max="${item.width}" step="1" value="${round(shape.width)}">
+            </label>
+            <label>
+              高
+              <input data-shape-tool="height" type="number" min="10" max="${item.height}" step="1" value="${round(shape.height)}">
+            </label>
+            <button class="editor-delete-button" type="button" data-delete-shape>删除图形</button>
+            ${renderShapeLibrary()}
+          </div>
+        `
+      }
+
+      if (!layer) {
+        return `<div class="editor-tools"><label class="wide">可双击译图全屏编辑，也可以从图形库添加独立图形。</label>${renderShapeLibrary()}</div>`
+      }
+
+      return `
+        <div class="editor-tools" data-tools-for="${item.id}">
+          <label>
+            文字
+            <textarea data-tool="text">${escapeHtml(layer.text)}</textarea>
+          </label>
+          <label>
+            字体
+            <select data-tool="fontFamily">
+              ${fontChoices.map((font) => fontOption(font.value, font.label, layer.fontFamily)).join('')}
+            </select>
+          </label>
+          <label>
+            字号
+            <input data-tool="fontSize" type="number" min="6" max="220" step="1" value="${round(layer.fontSize)}">
+          </label>
+          <label>
+            样式
+            <span class="style-button-row">
+              ${styleButton('bold', 'B', Number(layer.fontWeight) >= 700)}
+              ${styleButton('italic', 'I', layer.fontStyle === 'italic')}
+              ${styleButton('underline', 'U', layer.textDecoration === 'underline')}
+            </span>
+          </label>
+          <label>
+            颜色
+            <input data-tool="color" type="color" value="${escapeHtml(layer.color)}">
+          </label>
+          <label>
+            对齐
+            <select data-tool="align">
+              ${alignOption('left', '左', layer.align)}
+              ${alignOption('center', '中', layer.align)}
+              ${alignOption('right', '右', layer.align)}
+            </select>
+          </label>
+          <label>
+            X
+            <input data-tool="x" type="number" min="0" max="${item.width}" step="1" value="${round(layer.x)}">
+          </label>
+          <label>
+            Y
+            <input data-tool="y" type="number" min="0" max="${item.height}" step="1" value="${round(layer.y)}">
+          </label>
+          <label>
+            宽
+            <input data-tool="width" type="number" min="10" max="${item.width}" step="1" value="${round(layer.width)}">
+          </label>
+          <label>
+            高
+            <input data-tool="height" type="number" min="10" max="${item.height}" step="1" value="${round(layer.height)}">
+          </label>
+          <button class="editor-delete-button" type="button" data-delete-layer>删除文字</button>
+          ${renderShapeLibrary()}
+        </div>
+      `
+    }
+
+    function styleButton(action, label, active) {
+      return `<button class="${active ? 'active' : ''}" type="button" data-style-toggle="${action}">${label}</button>`
+    }
+
+    function renderShapeLibrary() {
+      const templates = [
+        { type: 'rect', label: '矩形' },
+        { type: 'round', label: '圆角' },
+        { type: 'pill', label: '胶囊' },
+        { type: 'circle', label: '圆形' },
+        { type: 'line', label: '线条' },
+      ]
+      return `
+        <div class="shape-library-wrap">
+          <label>图形库</label>
+          <div class="shape-library">
+            ${templates.map((template) => `
+              <button
+                class="shape-template${state.selectedShapeTemplate === template.type ? ' active' : ''}"
+                type="button"
+                draggable="true"
+                data-template="${template.type}"
+                title="${template.label}"
+              ></button>
+            `).join('')}
+          </div>
+        </div>
+      `
+    }
+
+    function bindCardEvents(card, item) {
+      card.querySelector('.card-footer button').addEventListener('click', () => downloadImage(item))
+      const compareButton = card.querySelector('[data-open-compare]')
+      if (compareButton) {
+        compareButton.addEventListener('click', () => openCompare(item))
+      }
+      const closeFullscreen = card.querySelector('[data-close-fullscreen]')
+      if (closeFullscreen) {
+        closeFullscreen.addEventListener('click', () => {
+          state.fullscreenItemId = ''
+          render()
+        })
+      }
+
+      const clearEditSelection = () => {
+        if (!item.selectedLayerId && !item.selectedShapeId && !item.editingLayerId) return false
+        const editor = card.querySelector(`[data-inline-text="${item.editingLayerId}"]`)
+        if (editor) updateInlineText(item, item.editingLayerId, editor)
+        item.editingLayerId = ''
+        item.selectedLayerId = ''
+        item.selectedShapeId = ''
+        render()
+        return true
+      }
+
+      const stage = card.querySelector('.edit-stage')
+      if (stage) {
+        const handleStageBlankPress = (event) => {
+          if (event.target === stage && clearEditSelection()) {
+            event.preventDefault()
+          }
+        }
+        stage.addEventListener('pointerdown', handleStageBlankPress)
+        stage.addEventListener('mousedown', handleStageBlankPress)
+      }
+
+      const canvas = card.querySelector('.edit-canvas')
+      if (canvas) {
+        const handleCanvasBlankPress = (event) => {
+          if (event.target === canvas || event.target?.classList?.contains('edit-bg')) {
+            if (clearEditSelection()) {
+              event.preventDefault()
+            }
+          }
+        }
+        canvas.addEventListener('pointerdown', handleCanvasBlankPress)
+        canvas.addEventListener('mousedown', handleCanvasBlankPress)
+        canvas.addEventListener('dblclick', (event) => {
+          if (event.target?.closest?.('.text-layer, .shape-object, .canvas-toolbar')) return
+          event.preventDefault()
+          state.fullscreenItemId = item.id
+          render()
+        })
+        canvas.addEventListener('dragover', (event) => {
+          if (event.dataTransfer?.types?.includes('application/x-image-workshop-shape')) {
+            event.preventDefault()
+          }
+        })
+        canvas.addEventListener('drop', (event) => {
+          const type = event.dataTransfer?.getData('application/x-image-workshop-shape')
+          if (!type) return
+          event.preventDefault()
+          addShape(item, type, canvasPointToImage(item, canvas, event.clientX, event.clientY))
+        })
+      }
+
+      for (const node of card.querySelectorAll('[data-zoom-action]')) {
+        node.addEventListener('click', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          zoomItem(item, node.dataset.zoomAction)
+        })
+      }
+
+      const addShapeButton = card.querySelector('[data-add-shape]')
+      if (addShapeButton) {
+        addShapeButton.addEventListener('click', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          addShape(item, state.selectedShapeTemplate)
+        })
+      }
+
+      for (const node of card.querySelectorAll('.shape-object')) {
+        const shapeId = node.dataset.shapeId
+        node.addEventListener('pointerdown', (event) => startShapeDrag(event, item.id, shapeId))
+        node.addEventListener('click', (event) => {
+          event.stopPropagation()
+          selectShape(item, shapeId)
+        })
+      }
+
+      for (const node of card.querySelectorAll('.text-layer')) {
+        const layerId = node.dataset.layerId
+        node.addEventListener('pointerdown', (event) => startLayerDrag(event, item.id, layerId))
+        node.addEventListener('dblclick', (event) => startInlineTextEdit(event, item, layerId))
+        node.addEventListener('click', (event) => {
+          event.stopPropagation()
+          if (shouldStartInlineTextEdit(item, layerId, event)) {
+            startInlineTextEdit(event, item, layerId)
+            return
+          }
+          rememberTextClick(item, layerId)
+          selectLayer(item, layerId)
+        })
+      }
+
+      for (const node of card.querySelectorAll('.resize-handle')) {
+        const shapeNode = node.closest('.shape-object')
+        const layerNode = node.closest('.text-layer')
+        if (shapeNode) {
+          node.addEventListener('pointerdown', (event) => startShapeResize(event, item.id, shapeNode.dataset.shapeId, node.dataset.handle))
+        } else if (layerNode) {
+          node.addEventListener('pointerdown', (event) => startLayerResize(event, item.id, layerNode.dataset.layerId, node.dataset.handle))
+        }
+      }
+
+      for (const node of card.querySelectorAll('[data-quick]')) {
+        const layerNode = node.closest('.text-layer')
+        const layerId = layerNode?.dataset.layerId
+        node.addEventListener('pointerdown', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        })
+        node.addEventListener('click', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          handleLayerQuickAction(item, layerId, node.dataset.quick)
+        })
+      }
+
+      for (const node of card.querySelectorAll('[data-quick-color]')) {
+        const layerNode = node.closest('.text-layer')
+        const layerId = layerNode?.dataset.layerId
+        node.addEventListener('pointerdown', (event) => {
+          event.stopPropagation()
+        })
+        const updateColor = () => updateLayerColorFromToolbar(item, layerId, node.value)
+        node.addEventListener('input', updateColor)
+        node.addEventListener('change', updateColor)
+      }
+
+      for (const node of card.querySelectorAll('[data-quick-font-size]')) {
+        const layerNode = node.closest('.text-layer')
+        const layerId = layerNode?.dataset.layerId
+        node.addEventListener('pointerdown', (event) => {
+          event.stopPropagation()
+        })
+        const updateFontSize = () => updateLayerFontSizeFromToolbar(item, layerId, node.value)
+        node.addEventListener('input', updateFontSize)
+        node.addEventListener('change', updateFontSize)
+      }
+
+      for (const node of card.querySelectorAll('[data-shape-quick]')) {
+        const shapeNode = node.closest('.shape-object')
+        const shapeId = shapeNode?.dataset.shapeId
+        node.addEventListener('pointerdown', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        })
+        node.addEventListener('click', (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (node.dataset.shapeQuick === 'delete') deleteShape(item, shapeId)
+        })
+      }
+
+      const tools = card.querySelector(`[data-tools-for="${item.id}"]`)
+      if (!tools) return
+      const deleteButton = tools.querySelector('[data-delete-layer]')
+      if (deleteButton) {
+        deleteButton.addEventListener('click', () => deleteLayer(item, item.selectedLayerId))
+      }
+      const deleteShapeButton = tools.querySelector('[data-delete-shape]')
+      if (deleteShapeButton) {
+        deleteShapeButton.addEventListener('click', () => deleteShape(item, item.selectedShapeId))
+      }
+      for (const input of tools.querySelectorAll('[data-tool]')) {
+        input.addEventListener('input', () => updateSelectedLayer(item, input.dataset.tool, input.value))
+        input.addEventListener('change', () => updateSelectedLayer(item, input.dataset.tool, input.value))
+      }
+      for (const button of tools.querySelectorAll('[data-style-toggle]')) {
+        button.addEventListener('click', (event) => {
+          event.preventDefault()
+          toggleSelectedLayerStyle(item, button.dataset.styleToggle)
+        })
+      }
+      for (const input of tools.querySelectorAll('[data-shape-tool]')) {
+        input.addEventListener('input', () => updateSelectedShape(item, input.dataset.shapeTool, input.value))
+        input.addEventListener('change', () => updateSelectedShape(item, input.dataset.shapeTool, input.value))
+      }
+      for (const button of tools.querySelectorAll('[data-template]')) {
+        button.addEventListener('click', () => {
+          state.selectedShapeTemplate = button.dataset.template
+          render()
+        })
+        button.addEventListener('dblclick', (event) => {
+          event.preventDefault()
+          addShape(item, button.dataset.template)
+        })
+        button.addEventListener('dragstart', (event) => {
+          state.selectedShapeTemplate = button.dataset.template
+          event.dataTransfer?.setData('application/x-image-workshop-shape', button.dataset.template)
+          event.dataTransfer?.setData('text/plain', button.dataset.template)
+        })
+      }
+      for (const editor of card.querySelectorAll('[data-inline-text]')) {
+        const layerId = editor.dataset.inlineText
+        editor.addEventListener('pointerdown', (event) => {
+          event.stopPropagation()
+        })
+        editor.addEventListener('input', () => updateInlineText(item, layerId, editor))
+        editor.addEventListener('blur', () => {
+          item.editingLayerId = ''
+          setTimeout(() => render(), 0)
+        })
+        editor.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            item.editingLayerId = ''
+            render()
+          }
+        })
+      }
+    }
+
+    function fontOption(value, label, current) {
+      return `<option value="${escapeHtml(value)}" ${value === current ? 'selected' : ''}>${label}</option>`
+    }
+
+    function alignOption(value, label, current) {
+      return `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`
+    }
+
+    function shapeOption(value, label, current) {
+      return `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`
+    }
+
+    async function openCompare(item) {
+      if (!item.backgroundUrl && !item.resultUrl) return
+      item.compareUrl = item.backgroundUrl ? await composeImage(item) : item.resultUrl
+      state.compareItemId = item.id
+      render()
+    }
+
+    function rememberTextClick(item, layerId) {
+      item.lastTextClickId = layerId
+      item.lastTextClickAt = performance.now()
+    }
+
+    function shouldStartInlineTextEdit(item, layerId, event) {
+      const now = performance.now()
+      const nativeDoubleClick = Number(event.detail || 0) >= 2
+      const fastSecondClick = item.lastTextClickId === layerId && now - Number(item.lastTextClickAt || 0) < 900
+      if (nativeDoubleClick || fastSecondClick) {
+        item.lastTextClickId = ''
+        item.lastTextClickAt = 0
+        return true
+      }
+      return false
+    }
+
+    function startInlineTextEdit(event, item, layerId) {
+      event?.preventDefault()
+      event?.stopPropagation()
+      enterInlineTextEdit(item, layerId)
+    }
+
+    function enterInlineTextEdit(item, layerId) {
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      item.editingLayerId = layerId
+      render()
+      requestAnimationFrame(() => {
+        const editor = document.querySelector(`[data-canvas-id="${item.id}"] [data-inline-text="${layerId}"]`)
+        if (!editor) return
+        editor.focus()
+        const selection = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(editor)
+        range.collapse(false)
+        selection.removeAllRanges()
+        selection.addRange(range)
+      })
+    }
+
+    function updateInlineText(item, layerId, editor) {
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer) return
+      layer.text = editor.innerText.replace(/\n$/, '')
+      const textarea = document.querySelector(`[data-tools-for="${item.id}"] [data-tool="text"]`)
+      if (textarea) textarea.value = layer.text
+      refreshTextLayerNode(item, layer)
+    }
+
+    function toggleSelectedLayerStyle(item, action) {
+      const layer = selectedLayer(item)
+      if (!layer) return
+      if (action === 'bold') {
+        layer.fontWeight = Number(layer.fontWeight) >= 700 ? 400 : 700
+      }
+      if (action === 'italic') {
+        layer.fontStyle = layer.fontStyle === 'italic' ? 'normal' : 'italic'
+      }
+      if (action === 'underline') {
+        layer.textDecoration = layer.textDecoration === 'underline' ? 'none' : 'underline'
+      }
+      render()
+    }
+
+    function canvasPointToImage(item, canvas, clientX, clientY) {
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = item.width / Math.max(1, rect.width)
+      const scaleY = item.height / Math.max(1, rect.height)
+      return {
+        x: clampNumber((clientX - rect.left) * scaleX, 0, item.width),
+        y: clampNumber((clientY - rect.top) * scaleY, 0, item.height),
+      }
+    }
+
+    function layerTextLayout(layer) {
+      const probe = document.createElement('canvas')
+      const context = probe.getContext('2d')
+      context.font = `${layer.fontStyle || 'normal'} ${layer.fontWeight} ${layer.fontSize}px ${layer.fontFamily}`
+      const lines = wrapCanvasText(context, layer.text, Math.max(8, layer.width))
+      const width = Math.max(...lines.map((line) => context.measureText(line).width), 8)
+      return { lines, width }
+    }
+
+    function renderLayerLines(lines) {
+      return lines
+        .map((line) => `<span class="layer-line">${escapeHtml(line || ' ')}</span>`)
+        .join('')
+    }
+
+    function contentWidthStyle(item, width) {
+      return `${((Math.ceil(width) + 2) / Math.max(1, item.width) * 100).toFixed(4)}cqw`
+    }
+
+    function contentHeightStyle(item, layer, lines) {
+      const height = Math.max(8, lines.length * layer.fontSize * 1.15)
+      return `${(height / Math.max(1, item.width) * 100).toFixed(4)}cqw`
+    }
+
+    function textHandleBoxStyle(item, layer, textLayout) {
+      const alignPosition =
+        layer.align === 'center'
+          ? 'left:50%;transform:translateX(-50%)'
+          : layer.align === 'right'
+            ? 'right:0'
+            : 'left:0'
+      return [
+        `--content-width:${contentWidthStyle(item, textLayout.width)}`,
+        `--content-height:${contentHeightStyle(item, layer, textLayout.lines)}`,
+        alignPosition,
+      ].join(';')
+    }
+
+    function layerStyle(item, layer) {
+      const left = percent(layer.x, item.width)
+      const top = percent(layer.y, item.height)
+      const width = percent(layer.width, item.width)
+      const minHeight = percent(layer.height, item.height)
+      const fontSize = (layer.fontSize / item.width) * 100
+      return [
+        `left:${left}%`,
+        `top:${top}%`,
+        `width:${width}%`,
+        `min-height:${minHeight}%`,
+        `color:${layer.color}`,
+        `font-size:${fontSize.toFixed(3)}cqw`,
+        `font-family:${layer.fontFamily}`,
+        `text-align:${layer.align}`,
+        `font-weight:${layer.fontWeight}`,
+        `font-style:${layer.fontStyle || 'normal'}`,
+        `text-decoration:${layer.textDecoration || 'none'}`,
+      ].join(';')
+    }
+
+    function shapeObjectStyle(item, shape) {
+      const left = percent(shape.x, item.width)
+      const top = percent(shape.y, item.height)
+      const width = percent(shape.width, item.width)
+      const height = percent(shape.height, item.height)
+      const radius =
+        shape.type === 'pill' || shape.type === 'circle' || shape.type === 'line'
+          ? '999px'
+          : shape.type === 'round'
+            ? '14px'
+            : '2px'
+      return [
+        `left:${left}%`,
+        `top:${top}%`,
+        `width:${width}%`,
+        `height:${height}%`,
+        `background:${hexToRgba(shape.color, shape.opacity)}`,
+        `border-radius:${radius}`,
+      ].join(';')
+    }
+
+    function hexToRgba(hex, opacity) {
+      const value = String(hex || '#ffffff').replace('#', '')
+      const full = value.length === 3
+        ? value.split('').map((part) => part + part).join('')
+        : value.padEnd(6, '0').slice(0, 6)
+      const red = parseInt(full.slice(0, 2), 16)
+      const green = parseInt(full.slice(2, 4), 16)
+      const blue = parseInt(full.slice(4, 6), 16)
+      return `rgba(${red}, ${green}, ${blue}, ${clampNumber(Number(opacity), 0, 1)})`
+    }
+
+    function previewWidth(item) {
+      const maxHeight = 380
+      const maxWidth = 720
+      const scaledWidth = Math.round((item.width / Math.max(1, item.height)) * maxHeight)
+      return Math.max(80, Math.min(item.width, scaledWidth, maxWidth))
+    }
+
+    function canvasDisplayWidth(item) {
+      const fullscreen = state.fullscreenItemId === item.id
+      const aspect = item.width / Math.max(1, item.height)
+      const availableWidth = Math.max(360, window.innerWidth - (fullscreen ? 150 : 320))
+      const availableHeight = Math.max(420, window.innerHeight - (fullscreen ? 220 : 220))
+      const maxWidth = fullscreen
+        ? Math.max(920, availableWidth)
+        : Math.min(1320, Math.max(680, availableWidth))
+      const maxHeight = fullscreen
+        ? Math.max(560, availableHeight)
+        : Math.min(920, Math.max(560, availableHeight))
+      const scaledWidth = Math.round(aspect * maxHeight)
+      const minWidth = Math.min(560, maxWidth)
+      const baseWidth = Math.max(minWidth, Math.min(scaledWidth, maxWidth))
+      return Math.round(baseWidth * (item.zoom || 1))
+    }
+
+    function selectedLayer(item) {
+      return item.layers.find((layer) => layer.id === item.selectedLayerId) || item.layers[0] || null
+    }
+
+    function selectedShape(item) {
+      return (item.shapes || []).find((shape) => shape.id === item.selectedShapeId) || null
+    }
+
+    function selectLayer(item, layerId) {
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      render()
+    }
+
+    function selectShape(item, shapeId) {
+      item.selectedShapeId = shapeId
+      item.selectedLayerId = ''
+      render()
+    }
+
+    function zoomItem(item, action) {
+      const current = item.zoom || 1
+      if (action === 'reset') {
+        item.zoom = 1
+      } else if (action === 'in') {
+        item.zoom = clampNumber(current + 0.25, 0.5, 4)
+      } else if (action === 'out') {
+        item.zoom = clampNumber(current - 0.25, 0.5, 4)
+      }
+      render()
+    }
+
+    function shapeTemplateDefaults(item, type) {
+      if (type === 'circle') {
+        const size = Math.round(Math.min(item.width, item.height) * 0.12)
+        return { width: size, height: size, color: '#a96d3e', opacity: 0.82 }
+      }
+      if (type === 'pill') {
+        return { width: Math.round(item.width * 0.28), height: Math.round(item.height * 0.07), color: '#ead7bd', opacity: 0.72 }
+      }
+      if (type === 'line') {
+        return { width: Math.round(item.width * 0.26), height: Math.max(6, Math.round(item.height * 0.01)), color: '#202631', opacity: 0.72 }
+      }
+      if (type === 'rect') {
+        return { width: Math.round(item.width * 0.22), height: Math.round(item.height * 0.11), color: '#f8fafc', opacity: 0.82 }
+      }
+      return { width: Math.round(item.width * 0.26), height: Math.round(item.height * 0.09), color: '#ead7bd', opacity: 0.72 }
+    }
+
+    function addShape(item, type = state.selectedShapeTemplate, point = null) {
+      const defaults = shapeTemplateDefaults(item, type)
+      const width = defaults.width
+      const height = defaults.height
+      const centerX = point ? point.x : item.width / 2
+      const centerY = point ? point.y : item.height / 2
+      const shape = {
+        id: `${item.id}-shape-${createId()}`,
+        type,
+        x: Math.round(clampNumber(centerX - width / 2, 0, item.width - width)),
+        y: Math.round(clampNumber(centerY - height / 2, 0, item.height - height)),
+        width,
+        height,
+        color: defaults.color,
+        opacity: defaults.opacity,
+      }
+      item.shapes = [...(item.shapes || []), shape]
+      item.selectedShapeId = shape.id
+      item.selectedLayerId = ''
+      render()
+    }
+
+    function handleLayerQuickAction(item, layerId, action) {
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer) return
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+
+      if (action === 'delete') {
+        deleteLayer(item, layerId)
+        return
+      }
+      if (action === 'bold') {
+        layer.fontWeight = Number(layer.fontWeight) >= 700 ? 400 : 700
+        render()
+        return
+      }
+      if (action === 'italic') {
+        layer.fontStyle = layer.fontStyle === 'italic' ? 'normal' : 'italic'
+        render()
+        return
+      }
+      if (action === 'underline') {
+        layer.textDecoration = layer.textDecoration === 'underline' ? 'none' : 'underline'
+        render()
+      }
+    }
+
+    function updateLayerColorFromToolbar(item, layerId, color) {
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer) return
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      layer.color = color
+      refreshTextLayerNode(item, layer)
+      const colorInput = document.querySelector(`[data-tools-for="${item.id}"] [data-tool="color"]`)
+      if (colorInput) colorInput.value = color
+    }
+
+    function updateLayerFontSizeFromToolbar(item, layerId, value) {
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer) return
+      if (String(value).trim() === '') return
+      const numericValue = Number(value)
+      if (!Number.isFinite(numericValue)) return
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      layer.fontSize = clampNumber(numericValue, 6, 220)
+      refreshTextLayerNode(item, layer)
+      const fontSizeInput = document.querySelector(`[data-tools-for="${item.id}"] [data-tool="fontSize"]`)
+      if (fontSizeInput) fontSizeInput.value = String(round(layer.fontSize))
+    }
+
+    function deleteLayer(item, layerId) {
+      const index = item.layers.findIndex((entry) => entry.id === layerId)
+      if (index === -1) return
+      item.layers.splice(index, 1)
+      item.selectedLayerId = item.layers[Math.min(index, item.layers.length - 1)]?.id || ''
+      render()
+    }
+
+    function deleteShape(item, shapeId) {
+      const index = (item.shapes || []).findIndex((entry) => entry.id === shapeId)
+      if (index === -1) return
+      item.shapes.splice(index, 1)
+      item.selectedShapeId = item.shapes[Math.min(index, item.shapes.length - 1)]?.id || ''
+      if (!item.selectedShapeId) item.selectedLayerId = item.layers[0]?.id || ''
+      render()
+    }
+
+    function updateSelectedShape(item, key, value) {
+      const shape = selectedShape(item)
+      if (!shape) return
+
+      if (key === 'type') shape.type = value
+      if (key === 'color') shape.color = value
+      if (key === 'opacity') shape.opacity = clampNumber(Number(value), 0, 1)
+      if (key === 'x') shape.x = clampNumber(Number(value), 0, item.width - 1)
+      if (key === 'y') shape.y = clampNumber(Number(value), 0, item.height - 1)
+      if (key === 'width') shape.width = clampNumber(Number(value), 10, item.width - shape.x)
+      if (key === 'height') shape.height = clampNumber(Number(value), 10, item.height - shape.y)
+
+      const node = document.querySelector(`[data-canvas-id="${item.id}"] [data-shape-id="${shape.id}"]`)
+      if (node) {
+        node.setAttribute('style', shapeObjectStyle(item, shape))
+        node.classList.add('active')
+      }
+    }
+
+    function updateSelectedLayer(item, key, value) {
+      const layer = selectedLayer(item)
+      if (!layer) return
+
+      if (key === 'text') layer.text = value
+      if (key === 'fontFamily') layer.fontFamily = value
+      if (key === 'fontSize') layer.fontSize = clampNumber(Number(value), 6, 220)
+      if (key === 'color') layer.color = value
+      if (key === 'align') layer.align = value
+      if (key === 'fontWeight') layer.fontWeight = Number(value)
+      if (key === 'fontStyle') layer.fontStyle = value
+      if (key === 'textDecoration') layer.textDecoration = value
+      if (key === 'x') layer.x = clampNumber(Number(value), 0, item.width - 1)
+      if (key === 'y') layer.y = clampNumber(Number(value), 0, item.height - 1)
+      if (key === 'width') layer.width = clampNumber(Number(value), 10, item.width - layer.x)
+      if (key === 'height') layer.height = clampNumber(Number(value), 10, item.height - layer.y)
+
+      refreshTextLayerNode(item, layer)
+    }
+
+    function refreshTextLayerNode(item, layer) {
+      const node = document.querySelector(`[data-canvas-id="${item.id}"] [data-layer-id="${layer.id}"]`)
+      if (node) {
+        const textLayout = layerTextLayout(layer)
+        const shell = node.querySelector('.content-shell')
+        if (shell) shell.style.setProperty('--content-width', contentWidthStyle(item, textLayout.width))
+        const handleBox = node.querySelector('.text-handle-box')
+        if (handleBox) handleBox.setAttribute('style', textHandleBoxStyle(item, layer, textLayout))
+        const content = node.querySelector('.layer-content')
+        if (content && !content.matches('[contenteditable="true"]')) content.innerHTML = renderLayerLines(textLayout.lines)
+        node.setAttribute('style', layerStyle(item, layer))
+        node.classList.add('active')
+      }
+    }
+
+    function startLayerDrag(event, itemId, layerId) {
+      if (event.target?.classList?.contains('resize-handle')) return
+      if (event.target?.closest?.('[contenteditable="true"]')) return
+      const item = state.images.find((entry) => entry.id === itemId)
+      if (!item) return
+      if (shouldStartInlineTextEdit(item, layerId, event)) {
+        startInlineTextEdit(event, item, layerId)
+        return
+      }
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      rememberTextClick(item, layerId)
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      dragState = {
+        mode: 'move-layer',
+        itemId,
+        layerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: layer.x,
+        startY: layer.y,
+      }
+      render()
+      document.addEventListener('pointermove', onLayerDrag)
+      document.addEventListener('pointerup', stopLayerDrag, { once: true })
+    }
+
+    function startShapeDrag(event, itemId, shapeId) {
+      if (event.target?.classList?.contains('resize-handle')) return
+      if (event.target?.closest?.('[data-shape-quick]')) return
+      const item = state.images.find((entry) => entry.id === itemId)
+      if (!item) return
+      const shape = (item.shapes || []).find((entry) => entry.id === shapeId)
+      if (!shape) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      item.selectedShapeId = shapeId
+      item.selectedLayerId = ''
+      dragState = {
+        mode: 'move-shape',
+        itemId,
+        shapeId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: shape.x,
+        startY: shape.y,
+      }
+      render()
+      document.addEventListener('pointermove', onShapeDrag)
+      document.addEventListener('pointerup', stopShapeDrag, { once: true })
+    }
+
+    function startLayerResize(event, itemId, layerId, handle) {
+      const item = state.images.find((entry) => entry.id === itemId)
+      if (!item) return
+      const layer = item.layers.find((entry) => entry.id === layerId)
+      if (!layer || !handle) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      item.selectedLayerId = layerId
+      item.selectedShapeId = ''
+      dragState = {
+        mode: 'resize',
+        itemId,
+        layerId,
+        handle,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: layer.x,
+        startY: layer.y,
+        startWidth: layer.width,
+        startHeight: layer.height,
+        startFontSize: layer.fontSize,
+      }
+      render()
+      document.addEventListener('pointermove', onLayerResize)
+      document.addEventListener('pointerup', stopLayerResize, { once: true })
+    }
+
+    function startShapeResize(event, itemId, shapeId, handle) {
+      const item = state.images.find((entry) => entry.id === itemId)
+      if (!item) return
+      const shape = (item.shapes || []).find((entry) => entry.id === shapeId)
+      if (!shape || !handle) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      item.selectedShapeId = shapeId
+      item.selectedLayerId = ''
+      dragState = {
+        mode: 'resize-shape',
+        itemId,
+        shapeId,
+        handle,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: shape.x,
+        startY: shape.y,
+        startWidth: shape.width,
+        startHeight: shape.height,
+      }
+      render()
+      document.addEventListener('pointermove', onShapeResize)
+      document.addEventListener('pointerup', stopShapeResize, { once: true })
+    }
+
+    function onLayerDrag(event) {
+      if (!dragState || dragState.mode !== 'move-layer') return
+      const item = state.images.find((entry) => entry.id === dragState.itemId)
+      const layer = item?.layers.find((entry) => entry.id === dragState.layerId)
+      const canvas = document.querySelector(`[data-canvas-id="${dragState.itemId}"]`)
+      if (!item || !layer || !canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = item.width / Math.max(1, rect.width)
+      const scaleY = item.height / Math.max(1, rect.height)
+      layer.x = clampNumber(dragState.startX + (event.clientX - dragState.startClientX) * scaleX, 0, item.width - layer.width)
+      layer.y = clampNumber(dragState.startY + (event.clientY - dragState.startClientY) * scaleY, 0, item.height - layer.height)
+
+      const node = canvas.querySelector(`[data-layer-id="${layer.id}"]`)
+      if (node) node.setAttribute('style', layerStyle(item, layer))
+      syncToolInputs(item, layer)
+    }
+
+    function onShapeDrag(event) {
+      if (!dragState || dragState.mode !== 'move-shape') return
+      const item = state.images.find((entry) => entry.id === dragState.itemId)
+      const shape = item?.shapes?.find((entry) => entry.id === dragState.shapeId)
+      const canvas = document.querySelector(`[data-canvas-id="${dragState.itemId}"]`)
+      if (!item || !shape || !canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = item.width / Math.max(1, rect.width)
+      const scaleY = item.height / Math.max(1, rect.height)
+      shape.x = clampNumber(dragState.startX + (event.clientX - dragState.startClientX) * scaleX, 0, item.width - shape.width)
+      shape.y = clampNumber(dragState.startY + (event.clientY - dragState.startClientY) * scaleY, 0, item.height - shape.height)
+
+      const node = canvas.querySelector(`[data-shape-id="${shape.id}"]`)
+      if (node) node.setAttribute('style', shapeObjectStyle(item, shape))
+      syncShapeToolInputs(item, shape)
+    }
+
+    function onLayerResize(event) {
+      if (!dragState || dragState.mode !== 'resize') return
+      const item = state.images.find((entry) => entry.id === dragState.itemId)
+      const layer = item?.layers.find((entry) => entry.id === dragState.layerId)
+      const canvas = document.querySelector(`[data-canvas-id="${dragState.itemId}"]`)
+      if (!item || !layer || !canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = item.width / Math.max(1, rect.width)
+      const scaleY = item.height / Math.max(1, rect.height)
+      const dx = (event.clientX - dragState.startClientX) * scaleX
+      const dy = (event.clientY - dragState.startClientY) * scaleY
+      const handle = dragState.handle
+      const minSize = 18
+
+      let nextX = dragState.startX
+      let nextY = dragState.startY
+      let nextWidth = dragState.startWidth
+      let nextHeight = dragState.startHeight
+
+      if (handle.includes('e')) {
+        nextWidth = dragState.startWidth + dx
+      }
+      if (handle.includes('s')) {
+        nextHeight = dragState.startHeight + dy
+      }
+      if (handle.includes('w')) {
+        nextX = dragState.startX + dx
+        nextWidth = dragState.startWidth - dx
+      }
+      if (handle.includes('n')) {
+        nextY = dragState.startY + dy
+        nextHeight = dragState.startHeight - dy
+      }
+
+      if (nextWidth < minSize) {
+        if (handle.includes('w')) nextX -= minSize - nextWidth
+        nextWidth = minSize
+      }
+      if (nextHeight < minSize) {
+        if (handle.includes('n')) nextY -= minSize - nextHeight
+        nextHeight = minSize
+      }
+
+      nextX = clampNumber(nextX, 0, item.width - minSize)
+      nextY = clampNumber(nextY, 0, item.height - minSize)
+      nextWidth = clampNumber(nextWidth, minSize, item.width - nextX)
+      nextHeight = clampNumber(nextHeight, minSize, item.height - nextY)
+
+      layer.x = nextX
+      layer.y = nextY
+      layer.width = nextWidth
+      layer.height = nextHeight
+      if (handle.includes('n') || handle.includes('s')) {
+        const ratio = nextHeight / Math.max(1, dragState.startHeight)
+        layer.fontSize = clampNumber(dragState.startFontSize * ratio, 6, 220)
+      }
+
+      const node = canvas.querySelector(`[data-layer-id="${layer.id}"]`)
+      if (node) node.setAttribute('style', layerStyle(item, layer))
+      syncToolInputs(item, layer)
+    }
+
+    function onShapeResize(event) {
+      if (!dragState || dragState.mode !== 'resize-shape') return
+      const item = state.images.find((entry) => entry.id === dragState.itemId)
+      const shape = item?.shapes?.find((entry) => entry.id === dragState.shapeId)
+      const canvas = document.querySelector(`[data-canvas-id="${dragState.itemId}"]`)
+      if (!item || !shape || !canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = item.width / Math.max(1, rect.width)
+      const scaleY = item.height / Math.max(1, rect.height)
+      const dx = (event.clientX - dragState.startClientX) * scaleX
+      const dy = (event.clientY - dragState.startClientY) * scaleY
+      const next = resizedBox(item, dragState, dx, dy, 18)
+
+      shape.x = next.x
+      shape.y = next.y
+      shape.width = next.width
+      shape.height = next.height
+
+      const node = canvas.querySelector(`[data-shape-id="${shape.id}"]`)
+      if (node) node.setAttribute('style', shapeObjectStyle(item, shape))
+      syncShapeToolInputs(item, shape)
+    }
+
+    function resizedBox(item, source, dx, dy, minSize) {
+      const handle = source.handle
+      let nextX = source.startX
+      let nextY = source.startY
+      let nextWidth = source.startWidth
+      let nextHeight = source.startHeight
+
+      if (handle.includes('e')) nextWidth = source.startWidth + dx
+      if (handle.includes('s')) nextHeight = source.startHeight + dy
+      if (handle.includes('w')) {
+        nextX = source.startX + dx
+        nextWidth = source.startWidth - dx
+      }
+      if (handle.includes('n')) {
+        nextY = source.startY + dy
+        nextHeight = source.startHeight - dy
+      }
+
+      if (nextWidth < minSize) {
+        if (handle.includes('w')) nextX -= minSize - nextWidth
+        nextWidth = minSize
+      }
+      if (nextHeight < minSize) {
+        if (handle.includes('n')) nextY -= minSize - nextHeight
+        nextHeight = minSize
+      }
+
+      nextX = clampNumber(nextX, 0, item.width - minSize)
+      nextY = clampNumber(nextY, 0, item.height - minSize)
+      nextWidth = clampNumber(nextWidth, minSize, item.width - nextX)
+      nextHeight = clampNumber(nextHeight, minSize, item.height - nextY)
+      return { x: nextX, y: nextY, width: nextWidth, height: nextHeight }
+    }
+
+    function stopLayerDrag() {
+      document.removeEventListener('pointermove', onLayerDrag)
+      dragState = null
+    }
+
+    function stopShapeDrag() {
+      document.removeEventListener('pointermove', onShapeDrag)
+      dragState = null
+    }
+
+    function stopLayerResize() {
+      document.removeEventListener('pointermove', onLayerResize)
+      dragState = null
+      render()
+    }
+
+    function stopShapeResize() {
+      document.removeEventListener('pointermove', onShapeResize)
+      dragState = null
+      render()
+    }
+
+    function syncToolInputs(item, layer) {
+      const tools = document.querySelector(`[data-tools-for="${item.id}"]`)
+      if (!tools) return
+      for (const key of ['x', 'y', 'width', 'height', 'fontSize']) {
+        const input = tools.querySelector(`[data-tool="${key}"]`)
+        if (input) input.value = String(round(layer[key]))
+      }
+    }
+
+    function syncShapeToolInputs(item, shape) {
+      const tools = document.querySelector(`[data-tools-for="${item.id}"]`)
+      if (!tools) return
+      for (const key of ['x', 'y', 'width', 'height']) {
+        const input = tools.querySelector(`[data-shape-tool="${key}"]`)
+        if (input) input.value = String(round(shape[key]))
+      }
+    }
+
+    function dataUrlToObjectUrl(dataUrl) {
+      if (!dataUrl || dataUrl.startsWith('blob:')) return dataUrl || ''
+      const [header, body] = dataUrl.split(',')
+      if (!header || !body) return dataUrl
+      const mime = header.match(/data:(.*?);base64/)?.[1] || 'image/png'
+      const binary = atob(body)
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+      return URL.createObjectURL(new Blob([bytes], { type: mime }))
+    }
+
+    function releaseGeneratedUrls(item) {
+      const urls = new Set([item.resultUrl, item.backgroundUrl].filter(Boolean))
+      for (const url of urls) {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+      }
+      item.resultUrl = ''
+      item.backgroundUrl = ''
+      item.compareUrl = ''
+    }
+
+    async function addFiles(files) {
+      const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'))
+      for (const file of imageFiles) {
+        const sourceUrl = URL.createObjectURL(file)
+        const image = await loadImage(sourceUrl)
+        state.images.push({
+          id: createId(),
+          file,
+          name: file.name,
+          sourceUrl,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          resultUrl: '',
+          backgroundUrl: '',
+          processing: false,
+          status: 'idle',
+          regions: [],
+          layers: [],
+          shapes: [],
+          selectedLayerId: '',
+          selectedShapeId: '',
+          editingLayerId: '',
+          zoom: 1,
+          compareUrl: '',
+          engine: '',
+          chatgptText: '',
+          gptStage: '',
+          error: '',
+        })
+      }
+      render()
+    }
+
+    function removeImage(id) {
+      const item = state.images.find((entry) => entry.id === id)
+      if (item) {
+        URL.revokeObjectURL(item.sourceUrl)
+        releaseGeneratedUrls(item)
+      }
+      state.images = state.images.filter((entry) => entry.id !== id)
+      if (state.compareItemId === id) state.compareItemId = ''
+      if (state.fullscreenItemId === id) state.fullscreenItemId = ''
+      render()
+    }
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const image = new Image()
+        image.onload = () => resolve(image)
+        image.onerror = () => reject(new Error('图片加载失败'))
+        image.src = url
+      })
+    }
+
+    async function processAll() {
+      if (!state.images.length) return
+      state.processing = true
+      updateControls()
+      for (const item of state.images) {
+        await processItem(item)
+        render()
+      }
+      state.processing = false
+      render()
+    }
+
+    async function processItem(item) {
+      item.processing = true
+      item.status = 'idle'
+      item.error = ''
+      item.regions = []
+      item.layers = []
+      item.shapes = []
+      item.selectedLayerId = ''
+      item.selectedShapeId = ''
+      item.editingLayerId = ''
+      item.engine = ''
+      item.chatgptText = ''
+      item.gptStage = ''
+      releaseGeneratedUrls(item)
+      render()
+
+      const payload = new FormData()
+      payload.append('file', item.file)
+      payload.append('target_language', language.value)
+      payload.append('translation_mode', translationMode.value)
+
+      try {
+        const response = await fetch('/translate', {
+          method: 'POST',
+          body: payload,
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || '处理失败')
+        item.resultUrl = data.image ? dataUrlToObjectUrl(data.image) : ''
+        item.backgroundUrl = data.background
+          ? dataUrlToObjectUrl(data.background)
+          : item.resultUrl
+        item.regions = Array.isArray(data.regions) ? data.regions : []
+        item.layers = item.regions.map((region, index) => createLayerFromRegion(item, region, index))
+        item.shapes = item.regions
+          .map((region, index) => createShapeFromRegion(item, region, index))
+          .filter(Boolean)
+        item.selectedLayerId = item.layers[0]?.id || ''
+        item.selectedShapeId = ''
+        item.editingLayerId = ''
+        item.zoom = item.zoom || 1
+        item.engine = data.engine || ''
+        item.status = 'done'
+      } catch (error) {
+        item.status = 'error'
+        item.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        item.processing = false
+      }
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms))
+    }
+
+    async function refreshChatgptStatus() {
+      if (!chatgptStatus) return
+      const mode = chatgptBrowserMode?.value || 'visible'
+      try {
+        const response = await fetch(`/chatgpt/status?browser_mode=${encodeURIComponent(mode)}`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || '检测失败')
+        const label = mode === 'hidden' ? '隐藏浏览器' : '9222 Chrome'
+        if (!data.browser_connected) {
+          chatgptStatus.textContent = `网页版 GPT：${data.detail || `${label} 未连接`}`
+        } else if (data.chatgpt_tab) {
+          chatgptStatus.textContent = `网页版 GPT：${label} 已连接，ChatGPT 已打开`
+        } else {
+          chatgptStatus.textContent = `网页版 GPT：${label} 已连接，未打开 ChatGPT`
+        }
+      } catch (error) {
+        chatgptStatus.textContent = `网页版 GPT：${error instanceof Error ? error.message : '无法检测'}`
+      }
+    }
+
+    async function openChatgpt() {
+      if (!chatgptStatus) return
+      const mode = chatgptBrowserMode?.value || 'visible'
+      const label = mode === 'hidden' ? '隐藏浏览器' : '9222 Chrome'
+      chatgptStatus.textContent = `网页版 GPT：正在打开 ${label} ChatGPT`
+      try {
+        const response = await fetch(`/chatgpt/open?browser_mode=${encodeURIComponent(mode)}`, { method: 'POST' })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || '打开失败')
+        chatgptStatus.textContent = mode === 'hidden'
+          ? '网页版 GPT：隐藏浏览器已后台打开 ChatGPT'
+          : '网页版 GPT：已在 9222 Chrome 打开 ChatGPT，请确认已登录'
+      } catch (error) {
+        chatgptStatus.textContent = `网页版 GPT：${error instanceof Error ? error.message : '打开失败'}`
+      }
+    }
+
+    async function processAllWithChatGPT() {
+      const prompt = chatgptPrompt?.value.trim()
+      if (!state.images.length || !prompt) return
+      state.processing = true
+      updateControls()
+      for (const item of state.images) {
+        await processItemWithChatGPT(item, prompt)
+        render()
+      }
+      state.processing = false
+      render()
+      refreshChatgptStatus()
+    }
+
+    async function processItemWithChatGPT(item, prompt) {
+      item.processing = true
+      item.status = 'idle'
+      item.error = ''
+      item.gptStage = '提交网页版 GPT'
+      item.regions = []
+      item.layers = []
+      item.shapes = []
+      item.selectedLayerId = ''
+      item.selectedShapeId = ''
+      item.editingLayerId = ''
+      item.engine = 'chatgpt-web'
+      item.chatgptText = ''
+      releaseGeneratedUrls(item)
+      render()
+
+      const payload = new FormData()
+      payload.append('file', item.file)
+      payload.append('prompt', prompt)
+      payload.append('browser_mode', chatgptBrowserMode?.value || 'visible')
+
+      try {
+        const response = await fetch('/chatgpt/jobs', {
+          method: 'POST',
+          body: payload,
+        })
+        const created = await response.json()
+        if (!response.ok) throw new Error(created.detail || '提交失败')
+
+        let job = created
+        while (job.status !== 'done' && job.status !== 'error') {
+          item.gptStage = job.stage || '等待网页 GPT'
+          render()
+          await sleep(2000)
+          const poll = await fetch(`/chatgpt/jobs/${encodeURIComponent(job.id)}`)
+          job = await poll.json()
+          if (!poll.ok) throw new Error(job.detail || '读取任务失败')
+        }
+
+        if (job.status === 'error') throw new Error(job.error || '网页版 GPT 处理失败')
+        if (!job.result_image) throw new Error('网页版 GPT 没有返回图片')
+
+        item.resultUrl = dataUrlToObjectUrl(job.result_image)
+        item.backgroundUrl = ''
+        item.regions = []
+        item.layers = []
+        item.shapes = []
+        item.selectedLayerId = ''
+        item.selectedShapeId = ''
+        item.editingLayerId = ''
+        item.gptStage = ''
+        item.chatgptText = job.result_text || ''
+        item.engine = 'chatgpt-web'
+        item.status = 'done'
+      } catch (error) {
+        item.status = 'error'
+        item.error = error instanceof Error ? error.message : String(error)
+        item.gptStage = ''
+      } finally {
+        item.processing = false
+      }
+    }
+
+    function createLayerFromRegion(item, region, index) {
+      const rawX = Number(region.x || 0)
+      const rawY = Number(region.y || 0)
+      const rawWidth = Number(region.width || item.width * 0.4)
+      const rawHeight = Number(region.height || item.height * 0.08)
+      const expanded = initialLayerBounds(item, rawX, rawY, rawWidth, rawHeight, region.translatedText || region.text || '')
+      const x = expanded.x
+      const y = expanded.y
+      const width = expanded.width
+      const height = expanded.height
+      const lowerBand = y + height > item.height * 0.82
+      const text = region.translatedText || region.text || ''
+      const fontFamily = chooseInitialFont(region, width, height)
+      const align = chooseInitialAlign(item, x, width)
+      const fontSize = fitInitialFontSize(text, width, height, fontFamily, region, item)
+      return {
+        id: `${item.id}-layer-${index}-${createId()}`,
+        text,
+        x,
+        y,
+        width,
+        height,
+        fontSize,
+        color: lowerBand ? '#e8c179' : '#202631',
+        fontFamily,
+        fontWeight: 700,
+        fontStyle: 'normal',
+        textDecoration: 'none',
+        align,
+      }
+    }
+
+    function createShapeFromRegion(item, region, index) {
+      const rawX = Number(region.x || 0)
+      const rawY = Number(region.y || 0)
+      const rawWidth = Number(region.width || item.width * 0.4)
+      const rawHeight = Number(region.height || item.height * 0.08)
+      const expanded = initialLayerBounds(item, rawX, rawY, rawWidth, rawHeight, region.translatedText || region.text || '')
+      const shape = chooseInitialShape(region, expanded.width, expanded.height)
+      if (shape.type === 'none') return null
+      return {
+        id: `${item.id}-shape-${index}-${createId()}`,
+        type: shape.type,
+        x: expanded.x,
+        y: expanded.y,
+        width: expanded.width,
+        height: expanded.height,
+        color: shape.color,
+        opacity: shape.opacity,
+      }
+    }
+
+    function initialLayerBounds(item, x, y, width, height, text) {
+      const textLength = String(text || '').replace(/\s+/g, '').length
+      const expandX = clampNumber(Math.min(width * 0.12, item.width * 0.018 + textLength * 0.45), 4, item.width * 0.075)
+      const expandY = clampNumber(height * 0.18, 2, item.height * 0.018)
+      const leftExpand = Math.min(expandX * 0.38, Math.max(0, x - item.width * 0.025))
+      const rightExpand = expandX * 1.25
+      let nextX = clampNumber(x - leftExpand, 0, item.width - 1)
+      let nextY = clampNumber(y - expandY, 0, item.height - 1)
+      let nextWidth = clampNumber(width + leftExpand + rightExpand, 24, item.width - nextX)
+      let nextHeight = clampNumber(height + expandY * 2, 20, item.height - nextY)
+
+      const isLargeTitle = height > item.height * 0.035 || width > item.width * 0.32
+      if (isLargeTitle) {
+        nextWidth = clampNumber(Math.max(nextWidth, width * 1.08), 40, item.width - nextX)
+        nextHeight = clampNumber(Math.max(nextHeight, height * 1.18), 24, item.height - nextY)
+      }
+
+      return { x: nextX, y: nextY, width: nextWidth, height: nextHeight }
+    }
+
+    function chooseInitialFont(region, width, height) {
+      const text = `${region.text || ''} ${region.translatedText || ''}`
+      if (height > 54 || width > 420) return "'Trebuchet MS', Arial, sans-serif"
+      if (/定制|香片|мойка|ароматизаторы/i.test(text)) return 'Verdana, Arial, sans-serif'
+      return 'Arial, sans-serif'
+    }
+
+    function chooseInitialAlign(item, x, width) {
+      if (width > item.width * 0.28) return 'center'
+      if (x > item.width * 0.58) return 'right'
+      return 'left'
+    }
+
+    function fitInitialFontSize(text, width, height, fontFamily, region, item) {
+      const probe = document.createElement('canvas')
+      const context = probe.getContext('2d')
+      const maxSize = Math.max(8, Math.round(Math.min(height * 0.52, width * 0.082, item.width * 0.042)))
+      const minSize = 7
+      const maxLines = height < item.height * 0.045 ? 2 : height < item.height * 0.085 ? 3 : 4
+      for (let size = maxSize; size >= minSize; size -= 1) {
+        context.font = `700 ${size}px ${fontFamily}`
+        const lines = wrapCanvasText(context, text, width * 0.96)
+        const lineHeight = size * 1.18
+        const longest = Math.max(...lines.map((line) => context.measureText(line).width), 0)
+        if (lines.length <= maxLines && longest <= width * 0.98 && lines.length * lineHeight <= height * 0.92) {
+          return size
+        }
+      }
+      return minSize
+    }
+
+    function chooseInitialShape(region, width, height) {
+      const source = String(region.text || '')
+      const ratio = width / Math.max(1, height)
+      if (/支持LOGO|自由定制/.test(source) && ratio > 4) {
+        return { type: 'pill', color: '#ead7bd', opacity: 0.72 }
+      }
+      if (/支持\s*定制/.test(source)) {
+        return { type: 'circle', color: '#a96d3e', opacity: 0.86 }
+      }
+      return { type: 'none', color: '#ead7bd', opacity: 0.72 }
+    }
+
+    async function downloadImage(item) {
+      if (!item.backgroundUrl && !item.resultUrl) return
+      const href = item.backgroundUrl ? await composeImage(item) : item.resultUrl
+      const link = document.createElement('a')
+      link.href = href
+      link.download = `${item.name.replace(/\.[^.]+$/, '') || 'translated'}-${language.value}.png`
+      link.click()
+    }
+
+    async function downloadAll() {
+      for (const item of state.images.filter((entry) => entry.backgroundUrl || entry.resultUrl)) {
+        await downloadImage(item)
+      }
+    }
+
+    async function composeImage(item) {
+      const image = await loadImage(item.backgroundUrl || item.resultUrl)
+      const canvas = document.createElement('canvas')
+      canvas.width = item.width
+      canvas.height = item.height
+      const context = canvas.getContext('2d')
+      context.drawImage(image, 0, 0, item.width, item.height)
+
+      for (const shape of item.shapes || []) {
+        drawShape(context, shape)
+      }
+      for (const layer of item.layers) {
+        drawLayer(context, layer)
+      }
+      return canvas.toDataURL('image/png')
+    }
+
+    function drawShape(context, shape) {
+      context.save()
+      context.fillStyle = hexToRgba(shape.color, shape.opacity)
+      const radius =
+        shape.type === 'pill' || shape.type === 'circle' || shape.type === 'line'
+          ? Math.min(shape.width, shape.height) / 2
+          : shape.type === 'round'
+            ? Math.min(shape.width, shape.height) * 0.18
+            : 2
+      roundedRect(context, shape.x, shape.y, shape.width, shape.height, radius)
+      context.fill()
+      context.restore()
+    }
+
+    function roundedRect(context, x, y, width, height, radius) {
+      const safeRadius = Math.min(radius, width / 2, height / 2)
+      context.beginPath()
+      context.moveTo(x + safeRadius, y)
+      context.lineTo(x + width - safeRadius, y)
+      context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
+      context.lineTo(x + width, y + height - safeRadius)
+      context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
+      context.lineTo(x + safeRadius, y + height)
+      context.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
+      context.lineTo(x, y + safeRadius)
+      context.quadraticCurveTo(x, y, x + safeRadius, y)
+      context.closePath()
+    }
+
+    function drawLayer(context, layer) {
+      context.save()
+      context.font = `${layer.fontStyle || 'normal'} ${layer.fontWeight} ${layer.fontSize}px ${layer.fontFamily}`
+      context.fillStyle = layer.color
+      context.textBaseline = 'top'
+      context.textAlign = layer.align
+      context.shadowColor = 'rgba(255,255,255,0.55)'
+      context.shadowBlur = Math.max(1, layer.fontSize * 0.06)
+
+      const lines = wrapCanvasText(context, layer.text, layer.width)
+      const lineHeight = layer.fontSize * 1.18
+      const startX = layer.align === 'center' ? layer.x + layer.width / 2 : layer.align === 'right' ? layer.x + layer.width : layer.x
+      lines.forEach((line, index) => {
+        const y = layer.y + index * lineHeight
+        context.fillText(line, startX, y)
+        if (layer.textDecoration === 'underline') {
+          const width = context.measureText(line).width
+          const underlineY = y + layer.fontSize * 1.04
+          const lineStartX = layer.align === 'center'
+            ? startX - width / 2
+            : layer.align === 'right'
+              ? startX - width
+              : startX
+          context.save()
+          context.shadowColor = 'transparent'
+          context.lineWidth = Math.max(1, layer.fontSize * 0.07)
+          context.beginPath()
+          context.moveTo(lineStartX, underlineY)
+          context.lineTo(lineStartX + width, underlineY)
+          context.strokeStyle = layer.color
+          context.stroke()
+          context.restore()
+        }
+      })
+      context.restore()
+    }
+
+    function wrapCanvasText(context, text, maxWidth) {
+      const lines = []
+      const paragraphs = String(text || '').split('\n').map((part) => part.trim()).filter(Boolean)
+      for (const paragraph of paragraphs) {
+        const words = paragraph.split(/\s+/)
+        let current = ''
+        for (const word of words) {
+          const candidate = `${current} ${word}`.trim()
+          if (!current || context.measureText(candidate).width <= maxWidth) {
+            current = candidate
+          } else {
+            lines.push(current)
+            current = word
+          }
+        }
+        if (current) lines.push(current)
+      }
+      return lines.length ? lines : ['']
+    }
+
+    function percent(value, total) {
+      return clampNumber((value / Math.max(1, total)) * 100, 0, 100).toFixed(4)
+    }
+
+    function round(value) {
+      return Math.round(Number(value) || 0)
+    }
+
+    function clampNumber(value, min, max) {
+      const safe = Number.isFinite(value) ? value : min
+      return Math.min(Math.max(safe, min), Math.max(min, max))
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+    }
+
+    async function checkServer() {
+      try {
+        const response = await fetch('/health')
+        if (!response.ok) throw new Error('offline')
+        serverStatus.textContent = '服务已开启'
+      } catch {
+        serverStatus.textContent = '服务未连接'
+      }
+    }
+
+    fileInput.addEventListener('change', (event) => addFiles(event.target.files || []))
+    processButton.addEventListener('click', processAll)
+    openChatgptButton.addEventListener('click', openChatgpt)
+    chatgptButton.addEventListener('click', processAllWithChatGPT)
+    chatgptPrompt.addEventListener('input', updateControls)
+    chatgptBrowserMode.addEventListener('change', refreshChatgptStatus)
+    downloadAllButton.addEventListener('click', downloadAll)
+    language.addEventListener('change', () => {
+      for (const item of state.images) {
+        releaseGeneratedUrls(item)
+        item.status = 'idle'
+        item.regions = []
+        item.layers = []
+        item.shapes = []
+        item.selectedLayerId = ''
+        item.selectedShapeId = ''
+        item.editingLayerId = ''
+        item.engine = ''
+        item.chatgptText = ''
+        item.gptStage = ''
+        item.error = ''
+      }
+      render()
+    })
+
+    translationMode.addEventListener('change', () => {
+      for (const item of state.images) {
+        releaseGeneratedUrls(item)
+        item.status = 'idle'
+        item.regions = []
+        item.layers = []
+        item.shapes = []
+        item.selectedLayerId = ''
+        item.selectedShapeId = ''
+        item.editingLayerId = ''
+        item.engine = ''
+        item.chatgptText = ''
+        item.gptStage = ''
+        item.error = ''
+      }
+      render()
+    })
+
+    for (const eventName of ['dragenter', 'dragover']) {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault()
+        dropZone.classList.add('dragging')
+      })
+    }
+
+    for (const eventName of ['dragleave', 'drop']) {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault()
+        dropZone.classList.remove('dragging')
+      })
+    }
+
+    dropZone.addEventListener('drop', (event) => addFiles(event.dataTransfer.files || []))
+
+    checkServer()
+    refreshChatgptStatus()
+    setInterval(refreshChatgptStatus, 15000)
+    render()
+  </script>
+</body>
+</html>
