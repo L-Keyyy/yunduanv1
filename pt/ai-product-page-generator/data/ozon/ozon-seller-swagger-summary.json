@@ -1,0 +1,378 @@
+{
+  "source": {
+    "copiedFrom": "/Users/gl001426/Desktop/swagger.json",
+    "localSwaggerPath": "data/ozon/ozon-seller-swagger.json",
+    "checkedAt": "2026-06-25",
+    "openapi": "3.0.0",
+    "title": "Документация Ozon Seller API",
+    "version": 2.1
+  },
+  "productImport": {
+    "endpoint": "POST /v3/product/import",
+    "requestSchema": "v3ImportProductsRequest",
+    "itemSchema": "v3ImportProductsRequestItem",
+    "officialRequired": [
+      "description_category_id",
+      "price",
+      "type_id"
+    ],
+    "fields": [
+      {
+        "id": "description_category_id",
+        "label": "Ozon 描述类目 ID",
+        "ozonCode": "description_category_id",
+        "inSwagger": true,
+        "officialRequired": true,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int64",
+        "descriptionRu": "Идентификатор категории. Можно получить с помощью метода [/v1/description-category/tree](#operation/DescriptionCategoryAPI_GetTree). Чтобы изменить категорию, используйте параметр `new_description_category_id`.",
+        "localNote": null
+      },
+      {
+        "id": "type_id",
+        "label": "Ozon Type ID",
+        "ozonCode": "type_id",
+        "inSwagger": true,
+        "officialRequired": true,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int64",
+        "descriptionRu": "Идентификатор типа товара.  Значения можно получить из такого же параметра `type_id` в ответе метода [/v1/description-category/tree](#operation/DescriptionCategoryAPI_GetTree). При заполнении этого параметра можно не указывать в `attibutes ` атрибут с параметром `id:8229`, `type_id` будет использоваться в приоритете.",
+        "localNote": null
+      },
+      {
+        "id": "offer_id",
+        "label": "卖家 SKU / offer_id",
+        "ozonCode": "offer_id",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Идентификатор товара в системе продавца — артикул.  Максимальная длина строки — 50 символов.",
+        "localNote": null
+      },
+      {
+        "id": "name",
+        "label": "商品名称",
+        "ozonCode": "name",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Название товара. До 500 символов.  [Правила для названия товара](https://seller-edu.ozon.ru/work-with-goods/trebovaniya-k-kartochkam-tovarov/product-information/nazvanie-tovara)",
+        "localNote": null
+      },
+      {
+        "id": "price",
+        "label": "售价",
+        "ozonCode": "price",
+        "inSwagger": true,
+        "officialRequired": true,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Цена товара с учётом скидок, отображается на карточке товара. Если на товар нет скидок, укажите значение `old_price` в этом параметре.",
+        "localNote": null
+      },
+      {
+        "id": "old_price",
+        "label": "原价 / 划线价",
+        "ozonCode": "old_price",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "recommended",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Цена до скидок (будет зачёркнута на карточке товара). Указывается в рублях. Разделитель дробной части — точка, до двух знаков после точки.  Если вы раньше передавали `old_price`, то при обновлении `price` также обновите `old_price`.",
+        "localNote": null
+      },
+      {
+        "id": "currency_code",
+        "label": "币种",
+        "ozonCode": "currency_code",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Валюта ваших цен. Переданное значение должно совпадать с валютой, которая установлена в настройках личного кабинета. По умолчанию передаётся `RUB` — российский рубль.  Например, если у вас установлена валюта взаиморасчётов юань, передавайте значение `CNY`, иначе вернётся ошибка.  Возможные значения:    - `RUB` — российский рубль,   - `BYN` — белорусский рубль,   - `KZT` — тенге,   - `EUR` — евро,   - `USD` — доллар США,   - `CNY` — юань.",
+        "localNote": null
+      },
+      {
+        "id": "vat",
+        "label": "VAT 税率",
+        "ozonCode": "vat",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Ставка НДС для товара:   - `0` — не облагается НДС,   - `0.05` — 5%,   - `0.07` — 7%,   - `0.1` — 10%,   - `0.2` — 20%,   - `0.22` — 22%.  Передавайте значение ставки, актуальное на данный момент.",
+        "localNote": null
+      },
+      {
+        "id": "barcode",
+        "label": "条码",
+        "ozonCode": "barcode",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Штрихкод товара.",
+        "localNote": null
+      },
+      {
+        "id": "primary_image",
+        "label": "主商品图",
+        "ozonCode": "primary_image",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Ссылка на главное изображение товара.",
+        "localNote": null
+      },
+      {
+        "id": "images",
+        "label": "附图",
+        "ozonCode": "images",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Массив изображений. До 30 штук. Изображения показываются на сайте в таком же порядке, как в массиве.  Если не передать значение `primary_image`, первое изображение в массиве будет главным для товара.  Если вы передали значение `primary_image`, передайте до 29 изображений. Если параметр `primary_image` пустой, передайте до 30 изображений.  Формат: адрес ссылки на изображение в общедоступном облачном хранилище. Формат изображения по ссылке — JPG или PNG.",
+        "localNote": null
+      },
+      {
+        "id": "depth",
+        "label": "包装长",
+        "ozonCode": "depth",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int32",
+        "descriptionRu": "Глубина упаковки.",
+        "localNote": null
+      },
+      {
+        "id": "width",
+        "label": "包装宽",
+        "ozonCode": "width",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int32",
+        "descriptionRu": "Ширина упаковки.",
+        "localNote": null
+      },
+      {
+        "id": "height",
+        "label": "包装高",
+        "ozonCode": "height",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int32",
+        "descriptionRu": "Высота упаковки.",
+        "localNote": null
+      },
+      {
+        "id": "dimension_unit",
+        "label": "尺寸单位",
+        "ozonCode": "dimension_unit",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Единица измерения габаритов:   - `mm` — миллиметры,   - `cm` — сантиметры,   - `in` — дюймы.",
+        "localNote": null
+      },
+      {
+        "id": "weight",
+        "label": "包装重量",
+        "ozonCode": "weight",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "integer",
+        "format": "int32",
+        "descriptionRu": "Вес товара в упаковке. Предельное значение — 1000 килограммов или конвертированная величина в других единицах измерения.",
+        "localNote": null
+      },
+      {
+        "id": "weight_unit",
+        "label": "重量单位",
+        "ozonCode": "weight_unit",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "required",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Единица измерения веса:   - `g` — граммы,   - `kg` — килограммы,   - `lb` — фунты.",
+        "localNote": null
+      },
+      {
+        "id": "attributes",
+        "label": "类目普通属性",
+        "ozonCode": "attributes",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Массив с характеристиками товара. Характеристики отличаются для разных категорий — их можно посмотреть в [Базе знаний продавца](https://seller-edu.ozon.ru/) или через API.",
+        "localNote": null
+      },
+      {
+        "id": "complex_attributes",
+        "label": "类目复合属性",
+        "ozonCode": "complex_attributes",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Массив характеристик, у которых есть вложенные атрибуты.",
+        "localNote": null
+      },
+      {
+        "id": "color_image",
+        "label": "营销颜色图",
+        "ozonCode": "color_image",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "string",
+        "format": null,
+        "descriptionRu": "Маркетинговый цвет.  Формат: адрес ссылки на изображение в общедоступном облачном хранилище. Формат изображения по ссылке — JPG.",
+        "localNote": null
+      },
+      {
+        "id": "images360",
+        "label": "360 图片",
+        "ozonCode": "images360",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Массив изображений 360. До 70 штук.  Формат: адрес ссылки на изображение в общедоступном облачном хранилище. Формат изображения по ссылке — JPG.",
+        "localNote": null
+      },
+      {
+        "id": "pdf_list",
+        "label": "PDF 文件",
+        "ozonCode": "pdf_list",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Список PDF-файлов.",
+        "localNote": null
+      },
+      {
+        "id": "geo_names",
+        "label": "地理限制",
+        "ozonCode": "geo_names",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Геоограничения — при необходимости заполните параметр в личном кабинете при создании или редактировании товара.  Необязательный параметр.",
+        "localNote": null
+      },
+      {
+        "id": "promotions",
+        "label": "促销",
+        "ozonCode": "promotions",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "array",
+        "format": null,
+        "descriptionRu": "Акции.",
+        "localNote": null
+      },
+      {
+        "id": "service_type",
+        "label": "服务类型",
+        "ozonCode": "service_type",
+        "inSwagger": true,
+        "officialRequired": false,
+        "workflowRequirement": "conditional",
+        "type": "ref",
+        "format": null,
+        "descriptionRu": "",
+        "localNote": null
+      },
+      {
+        "id": "min_price",
+        "label": "最低价",
+        "ozonCode": "min_price",
+        "inSwagger": false,
+        "officialRequired": false,
+        "workflowRequirement": "recommended",
+        "type": null,
+        "format": null,
+        "descriptionRu": "",
+        "localNote": "Not present in this swagger item schema, but kept as local pricing strategy field from existing workflow. Upload only if supported by the target API/version."
+      },
+      {
+        "id": "description",
+        "label": "商品简述",
+        "ozonCode": "description",
+        "inSwagger": false,
+        "officialRequired": false,
+        "workflowRequirement": "recommended",
+        "type": null,
+        "format": null,
+        "descriptionRu": "",
+        "localNote": "Not present in v3ImportProductsRequestItem properties in the provided swagger, but used by the existing local OZON_HD cleaner payload. Keep as compatibility/local enrichment field until upload validation confirms final API behavior."
+      },
+      {
+        "id": "tags",
+        "label": "标签 / 关键词",
+        "ozonCode": "tags",
+        "inSwagger": false,
+        "officialRequired": false,
+        "workflowRequirement": "recommended",
+        "type": null,
+        "format": null,
+        "descriptionRu": "",
+        "localNote": "Not present in official v3 import item schema. Keep as internal operational/AI review field; do not upload directly unless mapped to a supported Ozon field later."
+      }
+    ]
+  },
+  "categoryFlow": {
+    "tree": "POST /v1/description-category/tree",
+    "attributes": "POST /v1/description-category/attribute",
+    "attributeValues": "POST /v1/description-category/attribute/values",
+    "attributeRequestRequired": [
+      "description_category_id",
+      "type_id"
+    ],
+    "attributeValuesRequestRequired": [
+      "attribute_id",
+      "description_category_id",
+      "limit",
+      "type_id"
+    ]
+  },
+  "notes": [
+    "Official item required fields in this swagger are description_category_id, price, and type_id.",
+    "Category-specific required characteristics are not static; fetch them after description_category_id/type_id is matched.",
+    "tags/keywords are internal workflow fields, not official v3 product import item properties in this swagger."
+  ]
+}
