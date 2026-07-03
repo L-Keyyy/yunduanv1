@@ -160,6 +160,20 @@ type FeatureDraftResponse = {
   };
   notes: string[];
   aiResponse?: TextPromptResponse | null;
+  preparedProduct?: Record<string, unknown>;
+  promptAudit?: {
+    rawBytes: number;
+    preparedBytes: number;
+    removedUrlCount: number;
+    removedImageReferenceCount: number;
+    factCount: number;
+    variantCount: number;
+    jsonRepaired?: boolean;
+    returnedAttributeCount?: number;
+    attributeCount?: number;
+    requiredFilled?: number;
+    requiredCount?: number;
+  };
 };
 
 type CategoryMatchResponse = {
@@ -185,6 +199,16 @@ type CategoryMatchResponse = {
   };
   confidence: number;
   reason: string;
+  preparedProduct: Record<string, unknown>;
+  promptAudit: {
+    rawBytes: number;
+    preparedBytes: number;
+    removedUrlCount: number;
+    removedImageReferenceCount: number;
+    factCount: number;
+    variantCount: number;
+    jsonRepaired?: boolean;
+  };
 };
 
 type ApiUsagePreviewEntry = {
@@ -1050,7 +1074,24 @@ function mergeOzonAiMappingIntoDraft(
     });
     if (existingIndex !== undefined) {
       const existing = merged[existingIndex];
-      if (existing.source === "人工修改" && existing.value.trim()) continue;
+      if (
+        (existing.source === "人工修改" ||
+          existing.source === "业务默认") &&
+        existing.value.trim()
+      ) {
+        continue;
+      }
+      const mappedHasDictionaryId = resolvedValues.some((value) =>
+        Number.isSafeInteger(Number(value.dictionary_value_id)),
+      );
+      const existingHasDictionaryId = existing.ozonAttributeValues?.some(
+        (value) =>
+          Number.isSafeInteger(Number(value.dictionary_value_id)),
+      );
+      const uploadValues =
+        !mappedHasDictionaryId && existingHasDictionaryId
+          ? existing.ozonAttributeValues
+          : resolvedValues;
       merged[existingIndex] = {
         ...existing,
         label: localAttribute?.name || mapped.label || existing.label,
@@ -1069,7 +1110,7 @@ function mergeOzonAiMappingIntoDraft(
           localAttribute?.values.slice(0, 20).map((value) => value.value) ??
           existing.options,
         ozonComplexId: mapped.complexId,
-        ozonAttributeValues: resolvedValues,
+        ozonAttributeValues: uploadValues,
         aiJsonKey: mapped.jsonKey || mapped.label,
         aiJsonPath: mapped.jsonPath || mapped.attributeId,
         aiJsonValue: mapped.value,
@@ -2654,7 +2695,7 @@ export function ListingWorkflowPanel() {
       }
 
       setCategoryMatchMessage(
-        `${categoryResult.aiStatus.message} 已读取 ${attributeCount} 个类目特征，开始第二阶段填写。`,
+        `${categoryResult.aiStatus.message} 第一阶段已把 ${categoryResult.promptAudit.rawBytes} 字节原始 JSON 清洗为 ${categoryResult.promptAudit.preparedBytes} 字节商品事实，移除 ${categoryResult.promptAudit.removedImageReferenceCount} 个图片引用和 ${categoryResult.promptAudit.removedUrlCount} 个链接；已读取 ${attributeCount} 个类目特征，开始第二阶段填写。`,
       );
       setBusyAction("features");
       const featureResult = await readApi<FeatureDraftResponse>(
@@ -2663,6 +2704,7 @@ export function ListingWorkflowPanel() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             scrapedData,
+            preparedProduct: categoryResult.preparedProduct,
             categoryId: categoryResult.category.id,
             providerId: selectedFeatureModel.providerId,
             model: selectedFeatureModel.modelId,

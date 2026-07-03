@@ -2,12 +2,19 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+import { parseStructuredJson } from "@/lib/ai/parse-structured-json";
 import {
   BROWSER_AI_PROVIDER_ID,
   BROWSER_AI_PROVIDER_NAME,
   generateBrowserText,
   isBrowserAiProvider,
 } from "@/lib/browser-ai/client";
+import { prisma } from "@/lib/db/prisma";
+import {
+  auditProductFacts,
+  isPreparedProductFacts,
+  prepareProductFacts,
+} from "@/lib/listing-workflow/product-facts";
 import { ozonListingBaseFields, type OzonAttributeNode } from "@/lib/ozon/feature-tree";
 import { mapOzonAiResponse } from "@/lib/ozon/ai-response-mapper";
 import { getOzonFeatureSnapshot, type OzonAttributeSnapshot } from "@/lib/ozon/snapshot";
@@ -16,6 +23,7 @@ import { handleRouteError, ok } from "@/lib/utils/route";
 
 const featureDraftRequestSchema = z.object({
   scrapedData: z.record(z.string(), z.unknown()),
+  preparedProduct: z.record(z.string(), z.unknown()).optional().nullable(),
   categoryId: z.string().min(1).optional().nullable(),
   providerId: z.string().min(1).optional().nullable(),
   model: z.string().min(1).optional().nullable(),
@@ -23,20 +31,37 @@ const featureDraftRequestSchema = z.object({
   systemPrompt: z.string().trim().max(8000).optional().nullable(),
 });
 
-const aiFeatureResponseSchema = z.object({
-  features: z
-    .array(
-      z.object({
-        attributeId: z.string().min(1),
-        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]).optional(),
-        confidence: z.number().min(0).max(1).optional(),
-        status: z.enum(["auto", "review", "missing"]).optional(),
-        source: z.string().optional(),
-        reason: z.string().optional(),
-      }),
+const aiFeatureItemSchema = z.object({
+  attributeId: z
+    .union([z.string(), z.number()])
+    .transform((value) => String(value))
+    .pipe(z.string().min(1)),
+  value: z
+    .union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      z.array(z.union([z.string(), z.number(), z.boolean()])),
+      z.null(),
+    ])
+    .optional(),
+  confidence: z.coerce.number().min(0).max(1).optional(),
+  status: z
+    .preprocess(
+      (value) => (typeof value === "string" ? value.toLowerCase() : value),
+      z.enum(["auto", "review", "missing"]),
     )
-    .default([]),
-  notes: z.array(z.string()).optional(),
+    .optional(),
+  source: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+const aiFeatureResponseSchema = z.object({
+  features: z.array(aiFeatureItemSchema).default([]),
+  notes: z
+    .union([z.array(z.string()), z.string()])
+    .transform((value) => (Array.isArray(value) ? value : [value]))
+    .optional(),
 });
 
 type SourceFact = {
@@ -58,6 +83,10 @@ type DraftFeature = {
   reason: string;
   dictionaryValueCount: number;
   options: string[];
+  ozonAttributeValues?: Array<{
+    dictionary_value_id?: number;
+    value?: string;
+  }>;
 };
 
 const BRAND_DEFAULT_VALUE = "无";
@@ -521,6 +550,14 @@ function applyBusinessDefaults(features: DraftFeature[]) {
 
 function findHeuristicValue(attribute: OzonAttributeSnapshot, facts: SourceFact[]) {
   const attrName = normalizeText(attribute.name);
+  if (
+    attribute.type?.toLowerCase() === "url" ||
+    /pdf|видео|video|richконтент|кодпродавца|объединить|маркировк|тнвэд/.test(
+      attrName,
+    )
+  ) {
+    return null;
+  }
   if (isBrandText(attribute.name) || isBrandText(attribute.ozonAttributeId)) {
     return {
       value: BRAND_DEFAULT_VALUE,
@@ -579,6 +616,9 @@ function buildCategoryDraft(attributes: OzonAttributeSnapshot[], facts: SourceFa
   return attributes
     .map<DraftFeature>((attribute) => {
       const matched = findHeuristicValue(attribute, facts);
+      const hasDictionary = Boolean(
+        attribute.dictionaryId && attribute.dictionaryId !== "0",
+      );
       const options = attribute.values.slice(0, 20).map((value) => value.value);
       if (matched) {
         return {
@@ -590,9 +630,9 @@ function buildCategoryDraft(attributes: OzonAttributeSnapshot[], facts: SourceFa
           group: "category",
           ozonCode: attribute.ozonAttributeId,
           valueType: attribute.type,
-          status: attribute.dictionaryId ? "review" : "auto",
+          status: hasDictionary ? "review" : "auto",
           source: matched.source,
-          reason: attribute.dictionaryId
+          reason: hasDictionary
             ? `${matched.reason} 该字段有 Ozon 字典，上传前建议核对字典值。`
             : matched.reason,
           dictionaryValueCount: attribute.dictionaryValueCount,
@@ -613,13 +653,83 @@ function buildCategoryDraft(attributes: OzonAttributeSnapshot[], facts: SourceFa
         source: "",
         reason: attribute.isRequired
           ? "Ozon 同步表标记为必填，爬虫 JSON 中暂未找到可直接匹配的值。"
-          : attribute.dictionaryId
+          : hasDictionary
             ? "该字段绑定 Ozon 字典值，需要 AI 或人工从字典里确认。"
             : "需要人工复核后再上传。",
         dictionaryValueCount: attribute.dictionaryValueCount,
         options,
       };
     });
+}
+
+async function resolveFeatureDictionaryValues(
+  features: DraftFeature[],
+  attributes: OzonAttributeSnapshot[],
+) {
+  const attributeById = new Map(
+    attributes.map((attribute) => [attribute.ozonAttributeId, attribute]),
+  );
+  return await Promise.all(
+    features.map(async (feature) => {
+      if (feature.group !== "category" || !feature.value.trim()) return feature;
+      const attribute = attributeById.get(
+        feature.ozonCode || feature.attributeId,
+      );
+      if (!attribute) return feature;
+      const hasDictionary = Boolean(
+        attribute.dictionaryId && attribute.dictionaryId !== "0",
+      );
+      if (!hasDictionary) {
+        return {
+          ...feature,
+          ozonAttributeValues: [{ value: feature.value.trim() }],
+        };
+      }
+
+      const lookupValue = isBrandFeature(feature)
+        ? "Нет бренда"
+        : isCountryFeature(feature)
+          ? "Китай"
+          : feature.value.trim();
+      const normalizedLookup = normalizeText(lookupValue);
+      const cachedMatches = attribute.values.filter(
+        (candidate) => normalizeText(candidate.value) === normalizedLookup,
+      );
+      const databaseMatches = cachedMatches.length
+        ? cachedMatches
+        : await prisma.ozonAttributeValue.findMany({
+            where: {
+              attributeId: attribute.id,
+              value: lookupValue,
+            },
+            take: 2,
+          });
+      const matched = databaseMatches.length === 1 ? databaseMatches[0] : null;
+      const dictionaryValueId = Number(matched?.ozonValueId);
+      if (
+        matched &&
+        Number.isSafeInteger(dictionaryValueId) &&
+        dictionaryValueId > 0
+      ) {
+        return {
+          ...feature,
+          ozonAttributeValues: [
+            {
+              dictionary_value_id: dictionaryValueId,
+              value: matched.value,
+            },
+          ],
+          reason: `${feature.reason} 已匹配 Ozon 字典值 ${matched.value}。`,
+        };
+      }
+      return {
+        ...feature,
+        status: "review" as const,
+        ozonAttributeValues: undefined,
+        reason: `${feature.reason} 当前值尚未匹配到 Ozon 字典 ID，上传前需要人工复核。`,
+      };
+    }),
+  );
 }
 
 function mergeAiFeatures(baseDraft: DraftFeature[], aiFeatures: z.infer<typeof aiFeatureResponseSchema>["features"]) {
@@ -639,27 +749,55 @@ function mergeAiFeatures(baseDraft: DraftFeature[], aiFeatures: z.infer<typeof a
   }));
 }
 
-function parseJsonBlock(raw: string) {
-  const trimmed = raw.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced?.[1]?.trim() || trimmed;
-  const firstBrace = candidate.indexOf("{");
-  const lastBrace = candidate.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return candidate.slice(firstBrace, lastBrace + 1);
-  }
-  return candidate;
-}
-
 function modelCanFillFeatures(model: { capabilities: Record<string, unknown>; isAvailable?: boolean }) {
   const capabilities = model.capabilities ?? {};
   const isImageOnly = Boolean(capabilities.image_gen || capabilities.image_edit) && !capabilities.text;
   return model.isAvailable !== false && Boolean(capabilities.text || capabilities.structured_output || capabilities.vision) && !isImageOnly;
 }
 
+function shouldSendAttributeToAi(
+  attribute: OzonAttributeSnapshot,
+  draft: DraftFeature,
+) {
+  if (attribute.isRequired) return true;
+  const normalized = normalizeText(attribute.name);
+  if (
+    attribute.type?.toLowerCase() === "url" ||
+    /pdf|видео|video|richконтент|кодпродавца|объединить|маркировк|тнвэд/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  if (draft.value.trim()) return true;
+  return /вес|видмаск|возраст|единиц|количествотовара|объем|особенностисостава|пол$|применение|срокгодности|типкожи|упаковка|целеваяаудитория|эффект/.test(
+    normalized,
+  );
+}
+
+function salvageFeatureFragments(raw: string) {
+  const fragments = raw.match(/\{[^{}]*["']?attributeId["']?\s*:[^{}]*\}/giu) ?? [];
+  return fragments.flatMap((fragment) => {
+    try {
+      const parsed = parseStructuredJson(fragment);
+      const feature = aiFeatureItemSchema.safeParse(parsed.value);
+      return feature.success ? [feature.data] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const parsed = featureDraftRequestSchema.parse(await request.json());
+    const preparedProduct = isPreparedProductFacts(parsed.preparedProduct)
+      ? parsed.preparedProduct
+      : prepareProductFacts(parsed.scrapedData);
+    const promptAudit = auditProductFacts(
+      parsed.scrapedData,
+      preparedProduct,
+    );
     const facts = extractSourceFacts(parsed.scrapedData);
     const snapshot = await getOzonFeatureSnapshot({ categoryId: parsed.categoryId ?? undefined });
     const category = snapshot.selectedCategory;
@@ -678,6 +816,8 @@ export async function POST(request: NextRequest) {
       return ok({
         category: categorySummary,
         features: [...listingBaseDraft, ...buildGenericDraft(facts)],
+        preparedProduct,
+        promptAudit: { ...promptAudit, jsonRepaired: false },
         aiStatus: {
           ok: false,
           message: snapshot.connection.ready
@@ -695,6 +835,8 @@ export async function POST(request: NextRequest) {
       return ok({
         category: categorySummary,
         features: baseDraft,
+        preparedProduct,
+        promptAudit: { ...promptAudit, jsonRepaired: false },
         aiStatus: {
           ok: false,
           message: "未选择特征填写模型，已先生成基础表和当前类目特殊特征草稿。",
@@ -703,23 +845,46 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const attributeById = new Map(
+      category.attributes.map((attribute) => [
+        attribute.ozonAttributeId,
+        attribute,
+      ]),
+    );
+    const aiAttributeDraft = categoryDraft
+      .filter((draft) => {
+        const attribute = attributeById.get(draft.attributeId);
+        return attribute
+          ? shouldSendAttributeToAi(attribute, draft)
+          : false;
+      })
+      .slice(0, 28);
     const promptPayload = {
-      sourceJson: parsed.scrapedData,
-      ozonCategory: {
+      productFacts: preparedProduct,
+      matchedCategory: {
         label: category.label,
         path: category.path,
         descriptionCategoryId: category.descriptionCategoryId,
         typeId: category.typeId,
       },
-      attributes: category.attributes.map((attribute) => ({
-        attributeId: attribute.ozonAttributeId,
-        name: attribute.name,
-        description: attribute.description,
-        type: attribute.type,
-        required: attribute.isRequired,
-        dictionary: Boolean(attribute.dictionaryId),
-        values: attribute.values.slice(0, 200).map((value) => value.value),
-      })),
+      attributeTemplate: aiAttributeDraft.flatMap((draft) => {
+        const attribute = attributeById.get(draft.attributeId);
+        if (!attribute) return [];
+        return [
+          {
+            attributeId: attribute.ozonAttributeId,
+            name: attribute.name,
+            type: attribute.type,
+            required: attribute.isRequired,
+            allowedValues:
+              attribute.dictionaryId && attribute.dictionaryId !== "0"
+                ? attribute.values
+                    .slice(0, 80)
+                    .map((value) => value.value.slice(0, 140))
+                : [],
+          },
+        ];
+      }),
     };
 
     const systemPrompt =
@@ -727,9 +892,12 @@ export async function POST(request: NextRequest) {
       "你是电商商品信息处理助手，只依据用户提供的数据回答，不得编造商品事实。";
     const userPrompt = [
       [
-        "第二阶段任务：根据商品 JSON 填写已匹配类目的 Ozon 特征。",
-        "只能填写输入 attributes 中存在的 attributeId，不得创建额外字段；有字典候选值时优先使用候选值。",
-        '只返回严格 JSON：{"features":[{"attributeId":"Ozon属性ID","value":"可上传/可人工复核的值","confidence":0.0,"status":"auto或review或missing","source":"来源字段","reason":"简短中文原因"}],"notes":["人工注意事项"]}。',
+        "第二阶段任务：把第一阶段清洗后的同一份商品事实匹配到已确定类目的 Ozon 字段模板。",
+        "只处理 attributeTemplate；只能返回其中存在的 attributeId，不得创建字段。",
+        "只返回商品事实中有明确依据的非空字段；没有依据的字段直接省略，不要输出空值或 missing 项。",
+        "有 allowedValues 时，value 必须精确使用其中一个允许值；没有合适值时省略该字段，并在 notes 说明。",
+        "features 必须是 JSON 数组，最多返回 20 项。不要使用 Markdown，不要解释，不要在最后一项后加逗号。",
+        '只返回严格 JSON：{"features":[{"attributeId":"Ozon属性ID","value":"非空值","confidence":0.0,"status":"auto或review","source":"来源字段","reason":"简短中文原因"}],"notes":["人工注意事项"]}。',
         parsed.customPrompt ? `用户任务提示词：${parsed.customPrompt}` : "",
       ].filter(Boolean).join("\n"),
       `输入 JSON：\n${JSON.stringify(promptPayload, null, 2)}`,
@@ -753,6 +921,8 @@ export async function POST(request: NextRequest) {
         return ok({
           category: categorySummary,
           features: baseDraft,
+          preparedProduct,
+          promptAudit: { ...promptAudit, jsonRepaired: false },
           aiStatus: {
             ok: false,
             message: selectedModel
@@ -775,19 +945,109 @@ export async function POST(request: NextRequest) {
       responseProviderName = provider.name;
     }
 
-    const aiParsed = aiFeatureResponseSchema.parse(JSON.parse(parseJsonBlock(completionText)));
-    const ozonMapping = mapOzonAiResponse(completionText);
+    let structured: ReturnType<typeof parseStructuredJson>;
+    let aiParsed: z.infer<typeof aiFeatureResponseSchema>;
+    let salvagedFragments = false;
+    try {
+      structured = parseStructuredJson(completionText);
+      aiParsed = aiFeatureResponseSchema.parse(structured.value);
+    } catch (error) {
+      const salvaged = salvageFeatureFragments(completionText);
+      if (!salvaged.length) {
+        return ok({
+          category: categorySummary,
+          features: baseDraft,
+          preparedProduct,
+          promptAudit: {
+            ...promptAudit,
+            jsonRepaired: false,
+            sentAttributeCount: aiAttributeDraft.length,
+          },
+          aiStatus: {
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : "AI 返回内容无法解析为 JSON。",
+          },
+          notes: [
+            "已保留本地自动匹配草稿，请在原始回答中检查模型输出。",
+          ],
+          aiResponse: {
+            text: completionText,
+            providerId: responseProviderId,
+            providerName: responseProviderName,
+            model: modelId,
+            generatedAt: new Date().toISOString(),
+            ozonMapping: null,
+          },
+        });
+      }
+      salvagedFragments = true;
+      structured = {
+        value: { features: salvaged, notes: [] },
+        repaired: true,
+      };
+      aiParsed = aiFeatureResponseSchema.parse(structured.value);
+    }
+    const canonicalResponse = JSON.stringify(structured.value);
+    const ozonMapping = mapOzonAiResponse(canonicalResponse);
+    const knownAttributeIds = new Set(
+      categoryDraft.map((feature) => feature.attributeId),
+    );
+    const returnedKnownIds = new Set(
+      aiParsed.features
+        .map((feature) => feature.attributeId)
+        .filter((attributeId) => knownAttributeIds.has(attributeId)),
+    );
+    const mergedCategoryDraft = await resolveFeatureDictionaryValues(
+      mergeAiFeatures(categoryDraft, aiParsed.features),
+      category.attributes,
+    );
+    const requiredFeatures = mergedCategoryDraft.filter(
+      (feature) => feature.required,
+    );
+    const requiredFilled = requiredFeatures.filter((feature) =>
+      feature.value.trim(),
+    ).length;
+    const aiSucceeded = returnedKnownIds.size > 0;
+    const responseNotes = [...(aiParsed.notes ?? [])];
+    if (structured.repaired) {
+      responseNotes.unshift(
+        salvagedFragments
+          ? "AI 回答提前结束，程序已恢复其中完整的字段对象。"
+          : "AI 返回的非严格 JSON 已由程序自动修复。",
+      );
+    }
+    if (returnedKnownIds.size < categoryDraft.length) {
+      responseNotes.push(
+        `AI 返回了 ${returnedKnownIds.size}/${categoryDraft.length} 个类目字段，其余字段保留本地匹配值或待人工填写。`,
+      );
+    }
     return ok({
       category: categorySummary,
       features: [
         ...listingBaseDraft,
-        ...mergeAiFeatures(categoryDraft, aiParsed.features),
+        ...mergedCategoryDraft,
       ],
-      aiStatus: {
-        ok: true,
-        message: `已使用 ${modelId} 填写基础表和当前类目特殊特征；字典值和低置信度字段仍可人工修改。`,
+      preparedProduct,
+      promptAudit: {
+        ...promptAudit,
+        jsonRepaired: structured.repaired,
+        salvagedFragments,
+        sentAttributeCount: aiAttributeDraft.length,
+        returnedAttributeCount: returnedKnownIds.size,
+        attributeCount: categoryDraft.length,
+        requiredFilled,
+        requiredCount: requiredFeatures.length,
       },
-      notes: aiParsed.notes ?? [],
+      aiStatus: {
+        ok: aiSucceeded,
+        message: aiSucceeded
+          ? `已使用 ${modelId} 返回 ${returnedKnownIds.size}/${categoryDraft.length} 个类目字段，必填字段已填写 ${requiredFilled}/${requiredFeatures.length}。`
+          : `模型没有返回当前类目的有效 attributeId，已保留本地草稿，请查看原始回答后重试。`,
+      },
+      notes: responseNotes,
       aiResponse: {
         text: completionText,
         providerId: responseProviderId,

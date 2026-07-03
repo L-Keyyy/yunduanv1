@@ -1,8 +1,13 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
+import { parseStructuredJson } from "@/lib/ai/parse-structured-json";
 import { generateBrowserText, isBrowserAiProvider } from "@/lib/browser-ai/client";
 import { prisma } from "@/lib/db/prisma";
+import {
+  auditProductFacts,
+  prepareProductFacts,
+} from "@/lib/listing-workflow/product-facts";
 import { getOzonConnectionState } from "@/lib/ozon/config-service";
 import { getProviderAdapter } from "@/lib/services/provider-service";
 import { handleRouteError, ok } from "@/lib/utils/route";
@@ -174,18 +179,6 @@ function modelCanMatchCategory(model: { capabilities: Record<string, unknown>; i
   return model.isAvailable !== false && Boolean(capabilities.text || capabilities.structured_output || capabilities.vision) && !isImageOnly;
 }
 
-function parseJsonBlock(raw: string) {
-  const trimmed = raw.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced?.[1]?.trim() || trimmed;
-  const firstBrace = candidate.indexOf("{");
-  const lastBrace = candidate.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return candidate.slice(firstBrace, lastBrace + 1);
-  }
-  return candidate;
-}
-
 function serializeCandidate(category: CategoryCandidate) {
   return {
     id: category.id,
@@ -244,8 +237,84 @@ function scoreAiCategory(candidate: CategoryCandidate, aiTerms: string[], tokens
   for (const term of aiTerms) {
     const normalizedAi = normalizeText(term);
     if (normalizedAi && normalizedCandidate === normalizedAi) score += 2000;
-    if (normalizedAi && normalizedCandidate.includes(normalizedAi)) score += 1000;
-    if (normalizedAi && normalizedAi.includes(normalizeText(candidate.label))) score += 500;
+    if (normalizedAi.length >= 6 && normalizedCandidate.includes(normalizedAi)) {
+      score += 600;
+    }
+    const normalizedLabel = normalizeText(candidate.label);
+    if (
+      normalizedLabel.length >= 6 &&
+      normalizedAi.includes(normalizedLabel)
+    ) {
+      score += Math.min(120, normalizedLabel.length * 8);
+    }
+  }
+  const stopWords = new Set([
+    "для",
+    "или",
+    "при",
+    "под",
+    "над",
+    "без",
+    "the",
+    "and",
+    "for",
+    "with",
+  ]);
+  const stemToken = (token: string) => {
+    const normalized = token.toLowerCase();
+    if (normalized.length < 5) return normalized;
+    return normalized.replace(
+      /(иями|ями|ами|ого|ему|ому|ыми|ими|ей|ой|ий|ый|ая|яя|ое|ее|ов|ев|ам|ям|ах|ях|ом|ем|ы|и|а|я|у|ю|е|о)$/u,
+      "",
+    );
+  };
+  const semanticTokens = (value: string) =>
+    new Set(
+      (value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
+        .map(stemToken)
+        .filter((token) => token.length >= 3 && !stopWords.has(token)),
+    );
+  const candidateTokens = semanticTokens(candidateText);
+  const candidateLabelTokens = semanticTokens(candidate.label);
+  const aiTokenSet = semanticTokens(aiTerms.join(" "));
+  let semanticOverlap = 0;
+  for (const token of candidateTokens) {
+    if (aiTokenSet.has(token)) semanticOverlap += 1;
+  }
+  let labelOverlap = 0;
+  for (const token of candidateLabelTokens) {
+    if (aiTokenSet.has(token)) labelOverlap += 1;
+  }
+  score += semanticOverlap * 90 + labelOverlap * 220;
+  if (labelOverlap === 0) score -= 180;
+
+  const hasToken = (values: string[]) =>
+    values.some((value) =>
+      [...aiTokenSet].some(
+        (token) => token === value || token.startsWith(value),
+      ),
+    );
+  const candidateHasToken = (values: string[]) =>
+    values.some((value) =>
+      [...candidateTokens].some(
+        (token) => token === value || token.startsWith(value),
+      ),
+    );
+  const aiIsFaceCare = hasToken(["лиц", "альгинат", "facial", "face"]);
+  const aiIsHairCare = hasToken(["волос", "hair"]);
+  if (
+    aiIsFaceCare &&
+    candidateHasToken(["волос", "голов", "hair", "зуб", "полост"])
+  ) {
+    score -= 900;
+  }
+  if (aiIsHairCare && candidateHasToken(["лиц", "facial", "face"])) {
+    score -= 900;
+  }
+  if (hasToken(["маск"]) && candidateLabelTokens.has("маск")) {
+    score += 260;
+  } else if (hasToken(["маск"]) && !candidateTokens.has("маск")) {
+    score -= 180;
   }
   const candidateTerms = [candidate.label, ...candidate.path];
   const fuzzyScore = Math.max(
@@ -254,14 +323,22 @@ function scoreAiCategory(candidate: CategoryCandidate, aiTerms: string[], tokens
       aiTerms.map((term) => trigramSimilarity(candidateTerm, term)),
     ),
   );
-  if (fuzzyScore >= 0.35) score += Math.round(fuzzyScore * 400);
+  if (fuzzyScore >= 0.25) score += Math.round(fuzzyScore * 240);
   return score;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const parsed = categoryMatchRequestSchema.parse(await request.json());
-    const facts = extractSourceFacts(parsed.scrapedData);
+    const preparedProduct = prepareProductFacts(parsed.scrapedData);
+    const promptAudit = auditProductFacts(parsed.scrapedData, preparedProduct);
+    const facts = extractSourceFacts({
+      title: preparedProduct.title,
+      source: preparedProduct.source,
+      price: preparedProduct.price,
+      description: preparedProduct.description,
+      characteristics: preparedProduct.facts,
+    });
     const categories = await prisma.ozonCategory.findMany({
       where: {
         disabled: false,
@@ -285,6 +362,8 @@ export async function POST(request: NextRequest) {
       return ok({
         category: null,
         candidates: [],
+        preparedProduct,
+        promptAudit: { ...promptAudit, jsonRepaired: false },
         aiStatus: {
           ok: false,
           message: ozonConnection.ready
@@ -322,6 +401,8 @@ export async function POST(request: NextRequest) {
       return ok({
         category: null,
         candidates: candidates.slice(0, 8).map(serializeCandidate),
+        preparedProduct,
+        promptAudit: { ...promptAudit, jsonRepaired: false },
         aiStatus: {
           ok: false,
           message: "请先选择用于类目匹配的文本/结构化模型。",
@@ -336,12 +417,14 @@ export async function POST(request: NextRequest) {
       "你是电商商品信息处理助手，只依据用户提供的数据回答，不得编造商品事实。";
     const userPrompt = [
       [
-        "第一阶段任务：根据商品 JSON 判断最合适的 Ozon 商品类目和具体 type。",
+        "第一阶段任务：根据已清洗的商品事实判断最合适的 Ozon 商品类目和具体 type。",
+        "输入已经由程序移除图片、视频、URL、HTML、埋点和重复字段，只能依据剩余商品事实判断。",
         "categoryName 与 categoryPath 请优先使用 Ozon 官方俄文名称，已知 ID 时同时返回；不知道 ID 不要猜。",
-        '只返回严格 JSON：{"categoryName":"具体商品类型","categoryPath":["上级类目","具体类型"],"descriptionCategoryId":null,"typeId":null,"searchTerms":["俄文同义词"],"confidence":0.0,"reason":"简短中文原因"}。',
+        "categoryName 必须是最具体的商品类型，不要只返回材质、形态或宽泛上级类目。",
+        '只返回严格 JSON：{"categoryName":"具体商品类型","categoryPath":["上级类目","具体类型"],"descriptionCategoryId":null,"typeId":null,"searchTerms":["3-8个俄文精准同义词"],"confidence":0.0,"reason":"简短中文原因"}。',
         parsed.customPrompt ? `用户任务提示词：${parsed.customPrompt}` : "",
       ].filter(Boolean).join("\n"),
-      `商品 JSON：\n${JSON.stringify(parsed.scrapedData, null, 2)}`,
+      `商品事实 JSON：\n${JSON.stringify(preparedProduct, null, 2)}`,
     ].filter(Boolean).join("\n\n");
 
     let completionText: string;
@@ -358,6 +441,8 @@ export async function POST(request: NextRequest) {
         return ok({
           category: null,
           candidates: candidates.slice(0, 8).map(serializeCandidate),
+          preparedProduct,
+          promptAudit: { ...promptAudit, jsonRepaired: false },
           aiStatus: {
             ok: false,
             message: selectedModel
@@ -379,7 +464,29 @@ export async function POST(request: NextRequest) {
       completionText = completion.text;
     }
 
-    const aiParsed = aiCategoryMatchSchema.parse(JSON.parse(parseJsonBlock(completionText)));
+    let structured: ReturnType<typeof parseStructuredJson>;
+    let aiParsed: z.infer<typeof aiCategoryMatchSchema>;
+    try {
+      structured = parseStructuredJson(completionText);
+      aiParsed = aiCategoryMatchSchema.parse(structured.value);
+    } catch (error) {
+      return ok({
+        category: null,
+        candidates: candidates.slice(0, 8).map(serializeCandidate),
+        preparedProduct,
+        promptAudit: { ...promptAudit, jsonRepaired: false },
+        rawResponse: completionText,
+        aiStatus: {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "AI 返回类目内容无法解析为 JSON。",
+        },
+        confidence: 0,
+        reason: "",
+      });
+    }
     const descriptionCategoryId = integerValue(aiParsed.descriptionCategoryId);
     const typeId = integerValue(aiParsed.typeId);
     const aiTerms = aiCategoryTerms(aiParsed);
@@ -410,6 +517,12 @@ export async function POST(request: NextRequest) {
     return ok({
       category: matchedCategory ? serializeCandidate(matchedCategory) : null,
       candidates: responseCandidates.slice(0, 8).map(serializeCandidate),
+      preparedProduct,
+      promptAudit: {
+        ...promptAudit,
+        jsonRepaired: structured.repaired,
+      },
+      aiDecision: aiParsed,
       aiStatus: {
         ok: Boolean(matchedCategory),
         message: matchedCategory
