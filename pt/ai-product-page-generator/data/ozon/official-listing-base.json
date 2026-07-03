@@ -1,0 +1,234 @@
+{
+  "source": {
+    "checkedAt": "2026-06-25",
+    "notes": "Based on Ozon Seller API public documentation and the local OZON_HD product_cleaner payload shape. Category-specific attributes must still be fetched per description_category_id/type_id.",
+    "officialLinks": [
+      "https://dev.ozon.ru/start/294-Avtomaticheskii-import-i-obnovlenie-tovarov-v-Seller-API/",
+      "https://dev.ozon.ru/start/334-Ispolzovanie-polia-type-id-v-Seller-API/",
+      "https://docs.ozon.ru/api/seller/"
+    ],
+    "sellerApiEndpoints": [
+      {
+        "method": "POST",
+        "path": "/v1/description-category/tree",
+        "purpose": "Fetch Ozon category/type tree."
+      },
+      {
+        "method": "POST",
+        "path": "/v1/description-category/attribute",
+        "purpose": "Fetch attributes for a selected description_category_id/type_id."
+      },
+      {
+        "method": "POST",
+        "path": "/v1/description-category/attribute/values",
+        "purpose": "Fetch dictionary values for attributes that require dictionary selection."
+      },
+      {
+        "method": "POST",
+        "path": "/v3/product/import",
+        "purpose": "Import or update product payload."
+      }
+    ]
+  },
+  "baseFields": [
+    {
+      "id": "category_type",
+      "label": "Ozon 描述类目 / Type ID",
+      "ozonCode": "description_category_id/type_id",
+      "valueType": "enum",
+      "requirement": "required",
+      "source": "category_api",
+      "aiHint": "From Ozon category tree, select the leaf description_category_id and type_id before upload.",
+      "humanReview": true
+    },
+    {
+      "id": "offer_id",
+      "label": "卖家 SKU / offer_id",
+      "ozonCode": "offer_id",
+      "valueType": "string",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Stable seller SKU. Generate from source platform/product id when missing.",
+      "humanReview": true
+    },
+    {
+      "id": "name",
+      "label": "商品名称",
+      "ozonCode": "name",
+      "valueType": "string",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Clean product title for Ozon listing. Preserve brand, product type, key spec and core selling point.",
+      "humanReview": true
+    },
+    {
+      "id": "short_description",
+      "label": "商品简述 / 简介",
+      "ozonCode": "description",
+      "valueType": "rich_text",
+      "requirement": "recommended",
+      "source": "listing_base",
+      "aiHint": "Short listing description from source description, selling points and specs. Keep it factual.",
+      "humanReview": true
+    },
+    {
+      "id": "tags",
+      "label": "标签 / 关键词",
+      "ozonCode": "tags/keywords",
+      "valueType": "string",
+      "requirement": "recommended",
+      "source": "listing_base",
+      "aiHint": "Operational tags/keywords from source hashtags, tags, marketing labels, title and core use cases.",
+      "humanReview": true
+    },
+    {
+      "id": "brand",
+      "label": "品牌",
+      "ozonCode": "brand",
+      "valueType": "string",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Extract source brand; when no brand is available, map to allowed no-brand value for the matched category.",
+      "humanReview": true
+    },
+    {
+      "id": "price",
+      "label": "售价",
+      "ozonCode": "price",
+      "valueType": "number",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Final listing price. Should be calculated from purchase price, logistics, commission and margin rules.",
+      "humanReview": true
+    },
+    {
+      "id": "old_price",
+      "label": "原价 / 划线价",
+      "ozonCode": "old_price",
+      "valueType": "number",
+      "requirement": "recommended",
+      "source": "listing_base",
+      "aiHint": "Optional old price for marketing display. Keep consistent with platform rules.",
+      "humanReview": true
+    },
+    {
+      "id": "min_price",
+      "label": "最低价",
+      "ozonCode": "min_price",
+      "valueType": "number",
+      "requirement": "recommended",
+      "source": "listing_base",
+      "aiHint": "Optional minimum price for pricing strategy.",
+      "humanReview": true
+    },
+    {
+      "id": "currency_code",
+      "label": "币种",
+      "ozonCode": "currency_code",
+      "valueType": "enum",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Currency code used by the product import payload.",
+      "humanReview": true
+    },
+    {
+      "id": "barcode",
+      "label": "条码",
+      "ozonCode": "barcode",
+      "valueType": "string",
+      "requirement": "conditional",
+      "source": "listing_base",
+      "aiHint": "Use source barcode if available; otherwise leave for manual/store policy handling.",
+      "humanReview": true
+    },
+    {
+      "id": "images",
+      "label": "商品图片",
+      "ozonCode": "primary_image/images",
+      "valueType": "media",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Primary image plus additional images. Main image, detail images and translated/OCR images are handled by the image workflow.",
+      "humanReview": true
+    },
+    {
+      "id": "dimensions",
+      "label": "包装尺寸与重量",
+      "valueType": "dimension",
+      "requirement": "required",
+      "source": "listing_base",
+      "aiHint": "Logistics fields are required by product import and shipping calculations.",
+      "humanReview": true,
+      "children": [
+        {
+          "id": "weight",
+          "label": "包装重量",
+          "ozonCode": "weight",
+          "valueType": "number",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Package weight. Normalize to the unit used in weight_unit.",
+          "humanReview": true
+        },
+        {
+          "id": "weight_unit",
+          "label": "重量单位",
+          "ozonCode": "weight_unit",
+          "valueType": "enum",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Weight unit used by product import payload.",
+          "humanReview": true
+        },
+        {
+          "id": "depth",
+          "label": "包装长",
+          "ozonCode": "depth",
+          "valueType": "number",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Package depth/length.",
+          "humanReview": true
+        },
+        {
+          "id": "width",
+          "label": "包装宽",
+          "ozonCode": "width",
+          "valueType": "number",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Package width.",
+          "humanReview": true
+        },
+        {
+          "id": "height",
+          "label": "包装高",
+          "ozonCode": "height",
+          "valueType": "number",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Package height.",
+          "humanReview": true
+        },
+        {
+          "id": "dimension_unit",
+          "label": "尺寸单位",
+          "ozonCode": "dimension_unit",
+          "valueType": "enum",
+          "requirement": "required",
+          "source": "listing_base",
+          "aiHint": "Dimension unit used by product import payload.",
+          "humanReview": true
+        }
+      ]
+    }
+  ],
+  "categorySpecificFields": {
+    "source": "Seller API",
+    "fetchAfterCategoryMatched": true,
+    "endpoint": "/v1/description-category/attribute",
+    "requires": ["description_category_id", "type_id"],
+    "dictionaryValuesEndpoint": "/v1/description-category/attribute/values",
+    "notes": "Do not hard-code category-specific required attributes. Fetch them for the matched category/type, then show required, dictionary and conditional attributes under the category-specific feature block."
+  }
+}
