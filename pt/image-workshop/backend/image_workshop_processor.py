@@ -60,6 +60,38 @@ def process_product_image(
     )
 
 
+def process_product_image_regions(
+    image_bytes: bytes,
+    *,
+    regions: List[Dict[str, Any]],
+    target_language: str = "ru",
+    engine: str = "external-vision",
+    warnings: Optional[List[str]] = None,
+) -> ImageWorkshopResult:
+    """Erase and redraw externally translated text regions."""
+    if target_language not in SUPPORTED_TARGET_LANGUAGES:
+        target_language = "ru"
+
+    pil_image, np_image, cv2, np = _load_image_stack(image_bytes)
+    normalized_regions = [dict(region) for region in regions if isinstance(region, dict)]
+    output, background = _inpaint_and_draw(
+        pil_image=pil_image,
+        np_image=np_image,
+        cv2=cv2,
+        np=np,
+        regions=normalized_regions,
+        target_language=target_language,
+        translation_mode="provided",
+    )
+    return ImageWorkshopResult(
+        image_data_url=_image_to_data_url(output),
+        background_data_url=_image_to_data_url(background),
+        regions=normalized_regions,
+        engine=engine,
+        warnings=list(warnings or []),
+    )
+
+
 def _image_to_data_url(image) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -411,6 +443,9 @@ def _region_bounds(region: Dict[str, Any], image_width: int, image_height: int) 
 
 def _translated_region_text(region: Dict[str, Any], target_language: str, translation_mode: str = "product_short") -> str:
     source_text = str(region.get("text") or "")
+    provided_translation = str(region.get("translatedText") or "").strip()
+    if provided_translation:
+        return provided_translation
     kind = str(region.get("kind") or "")
     normalized = _normalize_source_text(source_text)
 

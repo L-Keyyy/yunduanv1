@@ -29,6 +29,7 @@
     }
 
     button,
+    input,
     select,
     textarea {
       font: inherit;
@@ -78,10 +79,89 @@
       font-weight: 800;
     }
 
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .status-pill.link {
+      background: #fff7ed;
+      color: #c2410c;
+      text-decoration: none;
+    }
+
     .layout {
       display: grid;
       grid-template-columns: 360px minmax(0, 1fr);
       gap: 20px;
+    }
+
+    .embedded-toolbar {
+      display: none;
+    }
+
+    body.embedded {
+      background: #f1f5f9;
+    }
+
+    body.embedded .page {
+      width: 100%;
+      margin: 0;
+    }
+
+    body.embedded .hero,
+    body.embedded .layout > .panel:first-child {
+      display: none;
+    }
+
+    body.embedded .embedded-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(255 255 255 / 96%);
+    }
+
+    .embedded-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .embedded-toolbar button {
+      height: 36px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .embedded-toolbar button.primary {
+      border-color: var(--brand-strong);
+      background: var(--brand-strong);
+      color: white;
+    }
+
+    body.embedded .layout {
+      display: block;
+    }
+
+    body.embedded .layout > .panel:last-child {
+      min-height: calc(100vh - 57px);
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
     }
 
     .panel {
@@ -156,6 +236,139 @@
       font-weight: 800;
     }
 
+    .field-note {
+      min-height: 20px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .api-settings {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #bfdbfe;
+      border-radius: 14px;
+      background: #f8fbff;
+    }
+
+    .api-settings[hidden] {
+      display: none;
+    }
+
+    .provider-settings[hidden] {
+      display: none;
+    }
+
+    .api-settings-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+      color: #1e3a5f;
+      font-weight: 900;
+    }
+
+    .api-settings-badge {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 11px;
+    }
+
+    .api-settings label:not(.remember-api-key) {
+      display: block;
+      margin: 10px 0 6px;
+      color: #53647b;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .api-input,
+    .api-settings select {
+      width: 100%;
+      height: 42px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      color: var(--text);
+      outline: none;
+    }
+
+    .api-secret-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px;
+    }
+
+    .api-secret-row button {
+      min-width: 54px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .remember-api-key {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 12px;
+      color: #53647b;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .api-settings-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .api-settings-actions button {
+      min-height: 38px;
+      padding: 0 6px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      color: #1f3b64;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .api-settings-actions button.primary {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: white;
+    }
+
+    .api-credential-status {
+      min-height: 18px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+
+    .api-credential-status.ok {
+      color: var(--ok);
+    }
+
+    .api-credential-status.error {
+      color: var(--danger);
+    }
+
     select {
       width: 100%;
       height: 46px;
@@ -165,6 +378,12 @@
       background: white;
       color: var(--text);
       outline: none;
+    }
+
+    select:disabled {
+      cursor: not-allowed;
+      background: #f1f5f9;
+      color: #94a3b8;
     }
 
     .prompt-input {
@@ -1013,7 +1232,22 @@
         <div class="eyebrow">图片工坊</div>
         <h1>商品图翻译</h1>
       </div>
-      <div class="status-pill" id="serverStatus">检测服务中</div>
+      <div class="hero-actions">
+        <a class="status-pill link" href="http://127.0.0.1:3000">原型项目</a>
+        <a class="status-pill link" href="/assets/product-page.html">商品页工作台</a>
+        <div class="status-pill" id="serverStatus">检测服务中</div>
+      </div>
+    </section>
+
+    <section class="embedded-toolbar" id="embeddedToolbar">
+      <div>
+        <strong>OCR Canvas 编辑器</strong>
+        <span class="field-note" id="embeddedStatus">等待载入图片</span>
+      </div>
+      <div class="embedded-toolbar-actions">
+        <button class="primary" id="embeddedProcessButton" disabled type="button">开始处理</button>
+        <button id="embeddedApplyButton" disabled type="button">应用到工作流</button>
+      </div>
     </section>
 
     <section class="layout">
@@ -1028,6 +1262,106 @@
               <div class="upload-hint">可一次选择多张，也可以拖进来。</div>
             </div>
           </label>
+
+          <div class="field">
+            <label for="ocrEngine">处理引擎</label>
+            <select id="ocrEngine">
+              <option value="local">本地 OCR + Canvas</option>
+              <option value="web">网页图片翻译</option>
+              <option value="baidu">百度图片翻译 API V2.0</option>
+              <option value="aliyun">阿里云图片翻译 API</option>
+              <option value="doubao">豆包网页版图片翻译（免费）</option>
+            </select>
+            <div class="field-note" id="engineNote">识别文字区域并生成可编辑的 Canvas 图层。</div>
+          </div>
+
+          <div class="api-settings" id="apiSettings" hidden>
+            <div class="api-settings-title">
+              <span>API 密钥配置</span>
+              <span class="api-settings-badge" id="apiSettingsBadge">高精擦除</span>
+            </div>
+
+            <label for="apiProvider">API 服务商</label>
+            <select id="apiProvider">
+              <option value="baidu">百度图片翻译 V2.0</option>
+              <option value="aliyun">阿里云 TranslateImage</option>
+            </select>
+
+            <div class="provider-settings" id="baiduProviderSettings">
+              <label for="baiduAppId">百度 APP ID</label>
+              <input class="api-input" id="baiduAppId" type="text" autocomplete="off" placeholder="开发者后台的 APP ID">
+
+              <label for="baiduApiKey">百度 API Key</label>
+              <div class="api-secret-row">
+                <input class="api-input" id="baiduApiKey" type="password" autocomplete="off" placeholder="API Key">
+                <button type="button" data-toggle-secret="baiduApiKey">显示</button>
+              </div>
+              <div class="field-note">从百度管理控制台的“API Key 管理”创建，通常以 Obtp_ 开头；不使用开发者信息页的“密钥”。</div>
+
+              <label class="remember-api-key" for="rememberBaiduCredentials">
+                <input id="rememberBaiduCredentials" type="checkbox">
+                保存到此浏览器，下次自动使用
+              </label>
+
+              <div class="api-settings-actions">
+                <button class="primary" id="testBaiduCredentialsButton" type="button">测试密钥</button>
+                <button id="saveBaiduCredentialsButton" type="button">保存配置</button>
+                <button id="clearBaiduCredentialsButton" type="button">清除</button>
+              </div>
+              <div class="api-credential-status" id="baiduCredentialStatus">密钥只会发给本机后端，并由后端调用百度。</div>
+            </div>
+
+            <div class="provider-settings" id="aliyunProviderSettings" hidden>
+              <label for="aliyunAccessKeyId">阿里云 AccessKey ID</label>
+              <input class="api-input" id="aliyunAccessKeyId" type="text" autocomplete="off" placeholder="AccessKey ID">
+
+              <label for="aliyunAccessKeySecret">阿里云 AccessKey Secret</label>
+              <div class="api-secret-row">
+                <input class="api-input" id="aliyunAccessKeySecret" type="password" autocomplete="off" placeholder="AccessKey Secret">
+                <button type="button" data-toggle-secret="aliyunAccessKeySecret">显示</button>
+              </div>
+
+              <label for="aliyunRegionId">服务地域</label>
+              <select id="aliyunRegionId">
+                <option value="cn-hangzhou">华东1（杭州）</option>
+                <option value="cn-shanghai">华东2（上海）</option>
+                <option value="cn-beijing">华北2（北京）</option>
+                <option value="cn-shenzhen">华南1（深圳）</option>
+              </select>
+
+              <label for="aliyunField">图片翻译类型</label>
+              <select id="aliyunField">
+                <option value="e-commerce">电商图片翻译</option>
+                <option value="general">通用图片翻译</option>
+              </select>
+
+              <label class="remember-api-key" for="rememberAliyunCredentials">
+                <input id="rememberAliyunCredentials" type="checkbox">
+                保存到此浏览器，下次自动使用
+              </label>
+
+              <div class="api-settings-actions">
+                <button class="primary" id="testAliyunCredentialsButton" type="button">测试连接</button>
+                <button id="saveAliyunCredentialsButton" type="button">保存配置</button>
+                <button id="clearAliyunCredentialsButton" type="button">清除</button>
+              </div>
+              <div class="api-credential-status" id="aliyunCredentialStatus">测试连接会调用一次阿里云图片翻译；成功调用可能按一张图片计费。</div>
+            </div>
+
+          </div>
+
+          <div class="api-settings" id="doubaoWebSettings" hidden>
+            <div class="api-settings-title">
+              <span>豆包网页版</span>
+              <span class="api-settings-badge">9222 Chrome</span>
+            </div>
+            <div class="field-note">使用当前 Chrome 的豆包登录态和免费网页额度，图片返回后由本机完成擦除与译文回填。</div>
+            <div class="api-settings-actions">
+              <button class="primary" id="openDoubaoButton" type="button">打开豆包并登录</button>
+              <button id="refreshDoubaoButton" type="button">重新检测</button>
+            </div>
+            <div class="api-credential-status" id="doubaoWebStatus">豆包网页版：检测中</div>
+          </div>
 
           <div class="field">
             <label for="language">目标语言</label>
@@ -1090,12 +1424,22 @@
   </main>
 
   <script>
+    const embeddedMode = new URLSearchParams(location.search).get('embedded') === '1'
+    const BAIDU_CREDENTIAL_STORAGE_KEY = 'image-workshop.baidu-credentials.v2'
+    const BAIDU_LEGACY_CREDENTIAL_STORAGE_KEY = 'image-workshop.baidu-credentials.v1'
+    const ALIYUN_CREDENTIAL_STORAGE_KEY = 'image-workshop.aliyun-credentials.v1'
+    if (embeddedMode) document.body.classList.add('embedded')
+
     const state = {
       images: [],
       processing: false,
       fullscreenItemId: '',
       compareItemId: '',
       selectedShapeTemplate: 'round',
+      embeddedImageId: '',
+      baiduServerConfigured: false,
+      aliyunServerConfigured: false,
+      doubaoWebReady: false,
     }
 
     let dragState = null
@@ -1107,8 +1451,35 @@
     const emptyState = document.querySelector('#emptyState')
     const processButton = document.querySelector('#processButton')
     const downloadAllButton = document.querySelector('#downloadAllButton')
+    const ocrEngine = document.querySelector('#ocrEngine')
+    const engineNote = document.querySelector('#engineNote')
     const language = document.querySelector('#language')
     const translationMode = document.querySelector('#translationMode')
+    const apiSettings = document.querySelector('#apiSettings')
+    const apiSettingsBadge = document.querySelector('#apiSettingsBadge')
+    const apiProvider = document.querySelector('#apiProvider')
+    const baiduProviderSettings = document.querySelector('#baiduProviderSettings')
+    const aliyunProviderSettings = document.querySelector('#aliyunProviderSettings')
+    const doubaoWebSettings = document.querySelector('#doubaoWebSettings')
+    const baiduAppId = document.querySelector('#baiduAppId')
+    const baiduApiKey = document.querySelector('#baiduApiKey')
+    const rememberBaiduCredentials = document.querySelector('#rememberBaiduCredentials')
+    const testBaiduCredentialsButton = document.querySelector('#testBaiduCredentialsButton')
+    const saveBaiduCredentialsButton = document.querySelector('#saveBaiduCredentialsButton')
+    const clearBaiduCredentialsButton = document.querySelector('#clearBaiduCredentialsButton')
+    const baiduCredentialStatus = document.querySelector('#baiduCredentialStatus')
+    const aliyunAccessKeyId = document.querySelector('#aliyunAccessKeyId')
+    const aliyunAccessKeySecret = document.querySelector('#aliyunAccessKeySecret')
+    const aliyunRegionId = document.querySelector('#aliyunRegionId')
+    const aliyunField = document.querySelector('#aliyunField')
+    const rememberAliyunCredentials = document.querySelector('#rememberAliyunCredentials')
+    const testAliyunCredentialsButton = document.querySelector('#testAliyunCredentialsButton')
+    const saveAliyunCredentialsButton = document.querySelector('#saveAliyunCredentialsButton')
+    const clearAliyunCredentialsButton = document.querySelector('#clearAliyunCredentialsButton')
+    const aliyunCredentialStatus = document.querySelector('#aliyunCredentialStatus')
+    const doubaoWebStatus = document.querySelector('#doubaoWebStatus')
+    const openDoubaoButton = document.querySelector('#openDoubaoButton')
+    const refreshDoubaoButton = document.querySelector('#refreshDoubaoButton')
     const chatgptPrompt = document.querySelector('#chatgptPrompt')
     const chatgptBrowserMode = document.querySelector('#chatgptBrowserMode')
     const chatgptStatus = document.querySelector('#chatgptStatus')
@@ -1116,6 +1487,9 @@
     const chatgptButton = document.querySelector('#chatgptButton')
     const counter = document.querySelector('#counter')
     const serverStatus = document.querySelector('#serverStatus')
+    const embeddedStatus = document.querySelector('#embeddedStatus')
+    const embeddedProcessButton = document.querySelector('#embeddedProcessButton')
+    const embeddedApplyButton = document.querySelector('#embeddedApplyButton')
 
     const fontChoices = [
       { value: 'Arial, sans-serif', label: 'Arial' },
@@ -1140,7 +1514,11 @@
     }
 
     function updateControls() {
-      processButton.disabled = !state.images.length || state.processing
+      const baiduReady = ocrEngine.value !== 'baidu' || baiduCredentialsReady()
+      const aliyunReady = ocrEngine.value !== 'aliyun' || aliyunCredentialsReady()
+      const doubaoReady = ocrEngine.value !== 'doubao' || state.doubaoWebReady
+      const engineReady = baiduReady && aliyunReady && doubaoReady
+      processButton.disabled = !state.images.length || state.processing || !engineReady
       processButton.textContent = state.processing ? '处理中' : `批量生成${state.images.length ? ` (${state.images.length})` : ''}`
       if (chatgptButton) {
         const hasPrompt = Boolean(chatgptPrompt?.value.trim())
@@ -1150,6 +1528,21 @@
       downloadAllButton.disabled = !state.images.some((item) => item.backgroundUrl || item.resultUrl)
       counter.textContent = `${state.images.length} 张`
       emptyState.style.display = state.images.length ? 'none' : 'grid'
+      if (embeddedProcessButton) {
+        embeddedProcessButton.disabled = !state.images.length || state.processing || !engineReady
+        embeddedProcessButton.textContent = state.processing ? '处理中' : '开始处理'
+      }
+      if (embeddedApplyButton) {
+        embeddedApplyButton.disabled = !state.images.some((item) => item.backgroundUrl || item.resultUrl) || state.processing
+      }
+      if (testBaiduCredentialsButton) {
+        testBaiduCredentialsButton.disabled = state.processing || !baiduCredentialsComplete()
+      }
+      if (testAliyunCredentialsButton) {
+        testAliyunCredentialsButton.disabled = state.processing || !aliyunCredentialsComplete()
+      }
+      if (openDoubaoButton) openDoubaoButton.disabled = state.processing
+      if (refreshDoubaoButton) refreshDoubaoButton.disabled = state.processing
     }
 
     function render() {
@@ -1178,6 +1571,14 @@
           ? escapeHtml(item.error || '处理失败')
           : item.engine === 'chatgpt-web'
             ? `网页版 GPT${item.chatgptText ? ` · ${escapeHtml(item.chatgptText).slice(0, 180)}` : ''}`
+            : item.engine === 'web-image-translation'
+              ? `网页图片翻译${item.detectedSourceLanguage ? ` · 识别 ${escapeHtml(item.detectedSourceLanguage)}` : ''}${item.translatedText ? ` · ${escapeHtml(item.translatedText).slice(0, 180)}` : ''}`
+            : item.engine === 'baidu-image-translation-v2'
+              ? `百度图片翻译 V2.0 · 高精擦除${item.detectedSourceLanguage ? ` · 识别 ${escapeHtml(item.detectedSourceLanguage)}` : ''}${item.translatedText ? ` · ${escapeHtml(item.translatedText).slice(0, 180)}` : ''}`
+            : item.engine === 'aliyun-image-translation'
+              ? '阿里云图片翻译 · TranslateImage'
+            : item.engine === 'doubao-image-translation'
+              ? `豆包视觉图片翻译${item.model ? ` · ${escapeHtml(item.model)}` : ''}${item.detectedSourceLanguage ? ` · 识别 ${escapeHtml(item.detectedSourceLanguage)}` : ''}${item.translatedText ? ` · ${escapeHtml(item.translatedText).slice(0, 180)}` : ''}`
             : `${item.layers.length ? `可编辑 ${item.layers.length} 处文字` : item.regions.length ? `已识别 ${item.regions.length} 处文字` : '未检测到文字'}${item.engine ? ` · ${escapeHtml(item.engine)}` : ''}`
         const resultPane = item.backgroundUrl
           ? renderEditableStage(item)
@@ -2444,6 +2845,10 @@
           zoom: 1,
           compareUrl: '',
           engine: '',
+          model: '',
+          sourceText: '',
+          translatedText: '',
+          detectedSourceLanguage: '',
           chatgptText: '',
           gptStage: '',
           error: '',
@@ -2475,6 +2880,21 @@
 
     async function processAll() {
       if (!state.images.length) return
+      if (ocrEngine.value === 'baidu' && !baiduCredentialsReady()) {
+        setBaiduCredentialStatus('请先填写并测试百度 APP ID 和 API Key。', 'error')
+        return
+      }
+      if (ocrEngine.value === 'aliyun' && !aliyunCredentialsReady()) {
+        setAliyunCredentialStatus('请先填写并测试阿里云 AccessKey ID 和 AccessKey Secret。', 'error')
+        return
+      }
+      if (ocrEngine.value === 'doubao' && !state.doubaoWebReady) {
+        await refreshDoubaoStatus()
+        if (!state.doubaoWebReady) {
+          setDoubaoWebStatus('请先打开豆包网页版并完成登录。', 'error')
+          return
+        }
+      }
       state.processing = true
       updateControls()
       for (const item of state.images) {
@@ -2496,6 +2916,10 @@
       item.selectedShapeId = ''
       item.editingLayerId = ''
       item.engine = ''
+      item.model = ''
+      item.sourceText = ''
+      item.translatedText = ''
+      item.detectedSourceLanguage = ''
       item.chatgptText = ''
       item.gptStage = ''
       releaseGeneratedUrls(item)
@@ -2505,6 +2929,17 @@
       payload.append('file', item.file)
       payload.append('target_language', language.value)
       payload.append('translation_mode', translationMode.value)
+      payload.append('ocr_engine', ocrEngine.value)
+      if (ocrEngine.value === 'baidu') {
+        payload.append('baidu_app_id', baiduAppId.value.trim())
+        payload.append('baidu_api_key', baiduApiKey.value.trim())
+      }
+      if (ocrEngine.value === 'aliyun') {
+        payload.append('aliyun_access_key_id', aliyunAccessKeyId.value.trim())
+        payload.append('aliyun_access_key_secret', aliyunAccessKeySecret.value.trim())
+        payload.append('aliyun_region_id', aliyunRegionId.value)
+        payload.append('aliyun_field', aliyunField.value)
+      }
 
       try {
         const response = await fetch('/translate', {
@@ -2527,6 +2962,10 @@
         item.editingLayerId = ''
         item.zoom = item.zoom || 1
         item.engine = data.engine || ''
+        item.model = data.model || ''
+        item.sourceText = data.sourceText || ''
+        item.translatedText = data.translatedText || ''
+        item.detectedSourceLanguage = data.detectedSourceLanguage || ''
         item.status = 'done'
       } catch (error) {
         item.status = 'error'
@@ -2536,8 +2975,249 @@
       }
     }
 
+    function currentBaiduCredentials() {
+      return {
+        appId: baiduAppId?.value.trim() || '',
+        apiKey: baiduApiKey?.value.trim() || '',
+      }
+    }
+
+    function baiduCredentialsComplete() {
+      const credentials = currentBaiduCredentials()
+      return Boolean(credentials.appId && credentials.apiKey)
+    }
+
+    function baiduCredentialsReady() {
+      return state.baiduServerConfigured || baiduCredentialsComplete()
+    }
+
+    function setBaiduCredentialStatus(message, kind = '') {
+      if (!baiduCredentialStatus) return
+      baiduCredentialStatus.textContent = message
+      baiduCredentialStatus.classList.toggle('ok', kind === 'ok')
+      baiduCredentialStatus.classList.toggle('error', kind === 'error')
+    }
+
+    function loadBaiduCredentials() {
+      localStorage.removeItem(BAIDU_LEGACY_CREDENTIAL_STORAGE_KEY)
+      try {
+        const saved = JSON.parse(localStorage.getItem(BAIDU_CREDENTIAL_STORAGE_KEY) || 'null')
+        if (!saved || typeof saved !== 'object') return
+        baiduAppId.value = String(saved.appId || '')
+        baiduApiKey.value = String(saved.apiKey || '')
+        rememberBaiduCredentials.checked = baiduCredentialsComplete()
+        if (baiduCredentialsComplete()) {
+          setBaiduCredentialStatus('已载入此浏览器保存的百度 API 配置。', 'ok')
+        }
+      } catch {
+        localStorage.removeItem(BAIDU_CREDENTIAL_STORAGE_KEY)
+      }
+    }
+
+    function saveBaiduCredentials({ silent = false } = {}) {
+      if (!baiduCredentialsComplete()) {
+        setBaiduCredentialStatus('请完整填写 APP ID 和 API Key。', 'error')
+        return false
+      }
+      const credentials = currentBaiduCredentials()
+      localStorage.setItem(BAIDU_CREDENTIAL_STORAGE_KEY, JSON.stringify(credentials))
+      rememberBaiduCredentials.checked = true
+      if (!silent) setBaiduCredentialStatus('百度 API 配置已保存到此浏览器。', 'ok')
+      return true
+    }
+
+    function clearBaiduCredentials() {
+      localStorage.removeItem(BAIDU_CREDENTIAL_STORAGE_KEY)
+      baiduAppId.value = ''
+      baiduApiKey.value = ''
+      rememberBaiduCredentials.checked = false
+      setBaiduCredentialStatus(
+        state.baiduServerConfigured
+          ? '浏览器配置已清除，将使用本机环境变量中的百度密钥。'
+          : '百度 API 配置已清除。',
+      )
+      updateControls()
+    }
+
+    async function testBaiduCredentials() {
+      if (!baiduCredentialsComplete()) {
+        setBaiduCredentialStatus('请完整填写 APP ID 和 API Key。', 'error')
+        return
+      }
+      const credentials = currentBaiduCredentials()
+      const payload = new FormData()
+      payload.append('app_id', credentials.appId)
+      payload.append('api_key', credentials.apiKey)
+      const originalText = testBaiduCredentialsButton.textContent
+      testBaiduCredentialsButton.disabled = true
+      testBaiduCredentialsButton.textContent = '测试中'
+      setBaiduCredentialStatus('正在向百度验证 API 密钥...')
+      try {
+        const response = await fetch('/baidu/credentials/check', {
+          method: 'POST',
+          body: payload,
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.detail || '密钥验证失败')
+        if (rememberBaiduCredentials.checked) saveBaiduCredentials({ silent: true })
+        setBaiduCredentialStatus('密钥验证成功，可以开始百度图片翻译。', 'ok')
+      } catch (error) {
+        setBaiduCredentialStatus(error instanceof Error ? error.message : '密钥验证失败', 'error')
+      } finally {
+        testBaiduCredentialsButton.textContent = originalText
+        updateControls()
+      }
+    }
+
+    function currentAliyunCredentials() {
+      return {
+        accessKeyId: aliyunAccessKeyId?.value.trim() || '',
+        accessKeySecret: aliyunAccessKeySecret?.value.trim() || '',
+        regionId: aliyunRegionId?.value || 'cn-hangzhou',
+        field: aliyunField?.value || 'e-commerce',
+      }
+    }
+
+    function aliyunCredentialsComplete() {
+      const credentials = currentAliyunCredentials()
+      return Boolean(credentials.accessKeyId && credentials.accessKeySecret)
+    }
+
+    function aliyunCredentialsReady() {
+      return state.aliyunServerConfigured || aliyunCredentialsComplete()
+    }
+
+    function setAliyunCredentialStatus(message, kind = '') {
+      if (!aliyunCredentialStatus) return
+      aliyunCredentialStatus.textContent = message
+      aliyunCredentialStatus.classList.toggle('ok', kind === 'ok')
+      aliyunCredentialStatus.classList.toggle('error', kind === 'error')
+    }
+
+    function loadAliyunCredentials() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(ALIYUN_CREDENTIAL_STORAGE_KEY) || 'null')
+        if (!saved || typeof saved !== 'object') return
+        aliyunAccessKeyId.value = String(saved.accessKeyId || '')
+        aliyunAccessKeySecret.value = String(saved.accessKeySecret || '')
+        aliyunRegionId.value = String(saved.regionId || 'cn-hangzhou')
+        aliyunField.value = String(saved.field || 'e-commerce')
+        rememberAliyunCredentials.checked = aliyunCredentialsComplete()
+        if (aliyunCredentialsComplete()) {
+          setAliyunCredentialStatus('已载入此浏览器保存的阿里云 API 配置。', 'ok')
+        }
+      } catch {
+        localStorage.removeItem(ALIYUN_CREDENTIAL_STORAGE_KEY)
+      }
+    }
+
+    function saveAliyunCredentials({ silent = false } = {}) {
+      if (!aliyunCredentialsComplete()) {
+        setAliyunCredentialStatus('请完整填写 AccessKey ID 和 AccessKey Secret。', 'error')
+        return false
+      }
+      const credentials = currentAliyunCredentials()
+      localStorage.setItem(ALIYUN_CREDENTIAL_STORAGE_KEY, JSON.stringify(credentials))
+      rememberAliyunCredentials.checked = true
+      if (!silent) setAliyunCredentialStatus('阿里云 API 配置已保存到此浏览器。', 'ok')
+      return true
+    }
+
+    function clearAliyunCredentials() {
+      localStorage.removeItem(ALIYUN_CREDENTIAL_STORAGE_KEY)
+      aliyunAccessKeyId.value = ''
+      aliyunAccessKeySecret.value = ''
+      aliyunRegionId.value = 'cn-hangzhou'
+      aliyunField.value = 'e-commerce'
+      rememberAliyunCredentials.checked = false
+      setAliyunCredentialStatus(
+        state.aliyunServerConfigured
+          ? '浏览器配置已清除，将使用本机环境变量中的阿里云密钥。'
+          : '阿里云 API 配置已清除。',
+      )
+      updateControls()
+    }
+
+    async function testAliyunCredentials() {
+      if (!aliyunCredentialsComplete()) {
+        setAliyunCredentialStatus('请完整填写 AccessKey ID 和 AccessKey Secret。', 'error')
+        return
+      }
+      const credentials = currentAliyunCredentials()
+      const payload = new FormData()
+      payload.append('access_key_id', credentials.accessKeyId)
+      payload.append('access_key_secret', credentials.accessKeySecret)
+      payload.append('region_id', credentials.regionId)
+      const originalText = testAliyunCredentialsButton.textContent
+      testAliyunCredentialsButton.disabled = true
+      testAliyunCredentialsButton.textContent = '测试中'
+      setAliyunCredentialStatus('正在调用一次阿里云图片翻译验证 AccessKey...')
+      try {
+        const response = await fetch('/aliyun/credentials/check', {
+          method: 'POST',
+          body: payload,
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.detail || 'AccessKey 验证失败')
+        if (rememberAliyunCredentials.checked) saveAliyunCredentials({ silent: true })
+        setAliyunCredentialStatus('AccessKey 验证成功，可以开始阿里云图片翻译。', 'ok')
+      } catch (error) {
+        setAliyunCredentialStatus(error instanceof Error ? error.message : 'AccessKey 验证失败', 'error')
+      } finally {
+        testAliyunCredentialsButton.textContent = originalText
+        updateControls()
+      }
+    }
+
     function sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms))
+    }
+
+    function setDoubaoWebStatus(message, kind = '') {
+      if (!doubaoWebStatus) return
+      doubaoWebStatus.textContent = message
+      doubaoWebStatus.classList.toggle('ok', kind === 'ok')
+      doubaoWebStatus.classList.toggle('error', kind === 'error')
+    }
+
+    async function refreshDoubaoStatus() {
+      if (!doubaoWebStatus) return false
+      setDoubaoWebStatus('豆包网页版：正在检测 9222 Chrome...')
+      try {
+        const response = await fetch('/doubao/status')
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.detail || '检测失败')
+        state.doubaoWebReady = Boolean(data.ready && data.logged_in)
+        if (state.doubaoWebReady) {
+          setDoubaoWebStatus('豆包网页版：已连接并登录，可使用网页免费额度。', 'ok')
+        } else if (data.ready) {
+          setDoubaoWebStatus('豆包网页已打开，请在 Chrome 中完成登录。', 'error')
+        } else {
+          setDoubaoWebStatus(data.detail || '豆包网页尚未打开。', 'error')
+        }
+      } catch (error) {
+        state.doubaoWebReady = false
+        setDoubaoWebStatus(error instanceof Error ? error.message : '豆包网页检测失败', 'error')
+      } finally {
+        updateControls()
+      }
+      return state.doubaoWebReady
+    }
+
+    async function openDoubao() {
+      setDoubaoWebStatus('正在打开豆包网页版...')
+      try {
+        const response = await fetch('/doubao/open', { method: 'POST' })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.detail || '打开豆包失败')
+        setDoubaoWebStatus('豆包已在 9222 Chrome 打开；完成登录后点击“重新检测”。')
+        await sleep(1200)
+        await refreshDoubaoStatus()
+      } catch (error) {
+        state.doubaoWebReady = false
+        setDoubaoWebStatus(error instanceof Error ? error.message : '打开豆包失败', 'error')
+        updateControls()
+      }
     }
 
     async function refreshChatgptStatus() {
@@ -2913,54 +3593,280 @@
       try {
         const response = await fetch('/health')
         if (!response.ok) throw new Error('offline')
+        const data = await response.json()
+        state.baiduServerConfigured = Boolean(data.engines?.baidu?.configured)
+        state.aliyunServerConfigured = Boolean(data.engines?.aliyun?.configured)
+        state.doubaoWebReady = Boolean(data.engines?.doubao?.ready && data.engines?.doubao?.configured)
         serverStatus.textContent = '服务已开启'
+        if (state.baiduServerConfigured && !baiduCredentialsComplete()) {
+          setBaiduCredentialStatus('本机环境变量中已配置百度 API 密钥。', 'ok')
+        }
+        if (state.aliyunServerConfigured && !aliyunCredentialsComplete()) {
+          setAliyunCredentialStatus('本机环境变量中已配置阿里云 AccessKey。', 'ok')
+        }
+        if (state.doubaoWebReady) {
+          setDoubaoWebStatus('豆包网页版：已连接并登录，可使用网页免费额度。', 'ok')
+        } else if (data.engines?.doubao?.detail) {
+          setDoubaoWebStatus(data.engines.doubao.detail, 'error')
+        }
       } catch {
+        state.baiduServerConfigured = false
+        state.aliyunServerConfigured = false
+        state.doubaoWebReady = false
         serverStatus.textContent = '服务未连接'
+      } finally {
+        updateControls()
       }
+    }
+
+    function postEmbeddedMessage(payload) {
+      if (!embeddedMode || window.parent === window) return
+      let targetOrigin = ''
+      try {
+        targetOrigin = new URL(document.referrer).origin
+      } catch {
+        return
+      }
+      if (!['http://127.0.0.1:3000', 'http://localhost:3000'].includes(targetOrigin)) return
+      window.parent.postMessage(payload, targetOrigin)
+    }
+
+    function objectUrlToDataUrl(url) {
+      return fetch(url)
+        .then((response) => {
+          if (!response.ok) throw new Error(`图片读取失败：${response.status}`)
+          return response.blob()
+        })
+        .then((blob) => new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result || ''))
+          reader.onerror = () => reject(new Error('图片读取失败'))
+          reader.readAsDataURL(blob)
+        }))
+    }
+
+    async function loadEmbeddedImage(payload) {
+      const image = payload?.image
+      if (!image?.dataUrl) return
+
+      for (const item of state.images) {
+        URL.revokeObjectURL(item.sourceUrl)
+        releaseGeneratedUrls(item)
+      }
+      state.images = []
+      state.embeddedImageId = String(image.id || '')
+
+      if (payload.engine === 'local' || payload.engine === 'web' || payload.engine === 'baidu' || payload.engine === 'aliyun' || payload.engine === 'doubao') {
+        ocrEngine.value = payload.engine
+      }
+      if (payload.targetLanguage) {
+        language.value = String(payload.targetLanguage)
+      }
+      updateEngineMode()
+
+      try {
+        const response = await fetch(image.dataUrl)
+        const blob = await response.blob()
+        const file = new File(
+          [blob],
+          String(image.name || 'workflow-image.png'),
+          { type: blob.type || 'image/png' },
+        )
+        await addFiles([file])
+        embeddedStatus.textContent = '图片已载入，点击开始处理'
+        postEmbeddedMessage({
+          type: 'image-workshop-status',
+          message: '图片已载入，可开始识别和修改',
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '图片载入失败'
+        embeddedStatus.textContent = message
+        postEmbeddedMessage({ type: 'image-workshop-status', message })
+      }
+    }
+
+    async function processEmbeddedImage() {
+      embeddedStatus.textContent = '正在处理图片...'
+      await processAll()
+      const item = state.images[0]
+      const message = item?.status === 'done'
+        ? '处理完成，可继续编辑或应用到工作流'
+        : item?.error || '图片处理失败'
+      embeddedStatus.textContent = message
+      postEmbeddedMessage({ type: 'image-workshop-status', message })
+    }
+
+    async function applyEmbeddedImage() {
+      const item = state.images[0]
+      if (!item || (!item.backgroundUrl && !item.resultUrl)) return
+      embeddedStatus.textContent = '正在回填修改结果...'
+      try {
+        const dataUrl = item.backgroundUrl
+          ? await composeImage(item)
+          : await objectUrlToDataUrl(item.resultUrl)
+        postEmbeddedMessage({
+          type: 'image-workshop-result',
+          imageId: state.embeddedImageId,
+          dataUrl,
+          name: `${item.name.replace(/\.[^.]+$/, '') || 'edited'}-${language.value}.png`,
+        })
+        embeddedStatus.textContent = '已应用到工作流'
+      } catch (error) {
+        embeddedStatus.textContent = error instanceof Error ? error.message : '回填失败'
+      }
+    }
+
+    window.addEventListener('message', (event) => {
+      if (!embeddedMode || event.source !== window.parent) return
+      if (!['http://127.0.0.1:3000', 'http://localhost:3000'].includes(event.origin)) return
+      const payload = event.data || {}
+      if (payload.type === 'image-workshop-load') {
+        void loadEmbeddedImage(payload)
+      }
+    })
+
+    function resetProcessedImages() {
+      for (const item of state.images) {
+        releaseGeneratedUrls(item)
+        item.status = 'idle'
+        item.regions = []
+        item.layers = []
+        item.shapes = []
+        item.selectedLayerId = ''
+        item.selectedShapeId = ''
+        item.editingLayerId = ''
+        item.engine = ''
+        item.model = ''
+        item.sourceText = ''
+        item.translatedText = ''
+        item.detectedSourceLanguage = ''
+        item.chatgptText = ''
+        item.gptStage = ''
+        item.error = ''
+      }
+      render()
+    }
+
+    function updateEngineMode({ reset = false } = {}) {
+      const localMode = ocrEngine.value === 'local'
+      const baiduMode = ocrEngine.value === 'baidu'
+      const aliyunMode = ocrEngine.value === 'aliyun'
+      const doubaoMode = ocrEngine.value === 'doubao'
+      const apiMode = baiduMode || aliyunMode
+      translationMode.disabled = !localMode
+      apiSettings.hidden = !apiMode
+      doubaoWebSettings.hidden = !doubaoMode
+      if (apiMode) apiProvider.value = ocrEngine.value
+      apiSettingsBadge.textContent = aliyunMode ? '云端回填' : '高精擦除'
+      baiduProviderSettings.hidden = !baiduMode
+      aliyunProviderSettings.hidden = !aliyunMode
+      engineNote.textContent = localMode
+        ? '识别文字区域并生成可编辑的 Canvas 图层。'
+        : baiduMode
+          ? '调用百度图片翻译 V2.0，使用高精擦除并直接回填译文。'
+          : aliyunMode
+            ? '调用阿里云 TranslateImage，完成 OCR、翻译、文字擦除和译文回填。'
+            : doubaoMode
+              ? '使用 9222 Chrome 中已登录的豆包网页免费识别和翻译，本地完成擦除与可编辑回填。'
+            : '直接生成翻译后的成品图，仍可继续添加文字和形状。'
+      emptyState.textContent = localMode
+        ? '上传图片后开始 OCR 识别和文字修补'
+        : baiduMode
+          ? '上传图片后使用百度高精擦除生成完整翻译图'
+          : aliyunMode
+            ? '上传图片后使用阿里云生成完整翻译图'
+            : doubaoMode
+              ? '上传图片后通过豆包网页版生成可编辑翻译图'
+            : '上传图片后生成完整翻译图'
+      if (reset) resetProcessedImages()
+      if (doubaoMode) void refreshDoubaoStatus()
+      updateControls()
     }
 
     fileInput.addEventListener('change', (event) => addFiles(event.target.files || []))
     processButton.addEventListener('click', processAll)
     openChatgptButton.addEventListener('click', openChatgpt)
     chatgptButton.addEventListener('click', processAllWithChatGPT)
+    embeddedProcessButton.addEventListener('click', processEmbeddedImage)
+    embeddedApplyButton.addEventListener('click', applyEmbeddedImage)
     chatgptPrompt.addEventListener('input', updateControls)
     chatgptBrowserMode.addEventListener('change', refreshChatgptStatus)
+    openDoubaoButton.addEventListener('click', openDoubao)
+    refreshDoubaoButton.addEventListener('click', refreshDoubaoStatus)
+    testBaiduCredentialsButton.addEventListener('click', testBaiduCredentials)
+    saveBaiduCredentialsButton.addEventListener('click', () => saveBaiduCredentials())
+    clearBaiduCredentialsButton.addEventListener('click', clearBaiduCredentials)
+    testAliyunCredentialsButton.addEventListener('click', testAliyunCredentials)
+    saveAliyunCredentialsButton.addEventListener('click', () => saveAliyunCredentials())
+    clearAliyunCredentialsButton.addEventListener('click', clearAliyunCredentials)
+    rememberBaiduCredentials.addEventListener('change', () => {
+      if (rememberBaiduCredentials.checked) {
+        saveBaiduCredentials()
+      } else {
+        localStorage.removeItem(BAIDU_CREDENTIAL_STORAGE_KEY)
+        setBaiduCredentialStatus('已取消浏览器保存，当前页面仍可继续使用这些密钥。')
+      }
+    })
+    for (const input of [baiduAppId, baiduApiKey]) {
+      input.addEventListener('input', () => {
+        if (rememberBaiduCredentials.checked) {
+          if (baiduCredentialsComplete()) {
+            saveBaiduCredentials({ silent: true })
+          } else {
+            localStorage.removeItem(BAIDU_CREDENTIAL_STORAGE_KEY)
+          }
+        }
+        setBaiduCredentialStatus('配置已修改，建议先测试密钥。')
+        updateControls()
+      })
+    }
+    rememberAliyunCredentials.addEventListener('change', () => {
+      if (rememberAliyunCredentials.checked) {
+        saveAliyunCredentials()
+      } else {
+        localStorage.removeItem(ALIYUN_CREDENTIAL_STORAGE_KEY)
+        setAliyunCredentialStatus('已取消浏览器保存，当前页面仍可继续使用这些密钥。')
+      }
+    })
+    for (const input of [aliyunAccessKeyId, aliyunAccessKeySecret]) {
+      input.addEventListener('input', () => {
+        if (rememberAliyunCredentials.checked) {
+          if (aliyunCredentialsComplete()) {
+            saveAliyunCredentials({ silent: true })
+          } else {
+            localStorage.removeItem(ALIYUN_CREDENTIAL_STORAGE_KEY)
+          }
+        }
+        setAliyunCredentialStatus('配置已修改，建议先测试连接。')
+        updateControls()
+      })
+    }
+    for (const select of [aliyunRegionId, aliyunField]) {
+      select.addEventListener('change', () => {
+        if (rememberAliyunCredentials.checked && aliyunCredentialsComplete()) {
+          saveAliyunCredentials({ silent: true })
+        }
+        resetProcessedImages()
+      })
+    }
+    for (const button of document.querySelectorAll('[data-toggle-secret]')) {
+      button.addEventListener('click', () => {
+        const input = document.querySelector(`#${button.dataset.toggleSecret}`)
+        if (!input) return
+        const showing = input.type === 'text'
+        input.type = showing ? 'password' : 'text'
+        button.textContent = showing ? '显示' : '隐藏'
+      })
+    }
     downloadAllButton.addEventListener('click', downloadAll)
-    language.addEventListener('change', () => {
-      for (const item of state.images) {
-        releaseGeneratedUrls(item)
-        item.status = 'idle'
-        item.regions = []
-        item.layers = []
-        item.shapes = []
-        item.selectedLayerId = ''
-        item.selectedShapeId = ''
-        item.editingLayerId = ''
-        item.engine = ''
-        item.chatgptText = ''
-        item.gptStage = ''
-        item.error = ''
-      }
-      render()
+    ocrEngine.addEventListener('change', () => updateEngineMode({ reset: true }))
+    apiProvider.addEventListener('change', () => {
+      if (!['baidu', 'aliyun'].includes(apiProvider.value)) return
+      ocrEngine.value = apiProvider.value
+      updateEngineMode({ reset: true })
     })
-
-    translationMode.addEventListener('change', () => {
-      for (const item of state.images) {
-        releaseGeneratedUrls(item)
-        item.status = 'idle'
-        item.regions = []
-        item.layers = []
-        item.shapes = []
-        item.selectedLayerId = ''
-        item.selectedShapeId = ''
-        item.editingLayerId = ''
-        item.engine = ''
-        item.chatgptText = ''
-        item.gptStage = ''
-        item.error = ''
-      }
-      render()
-    })
+    language.addEventListener('change', resetProcessedImages)
+    translationMode.addEventListener('change', resetProcessedImages)
 
     for (const eventName of ['dragenter', 'dragover']) {
       dropZone.addEventListener(eventName, (event) => {
@@ -2978,9 +3884,16 @@
 
     dropZone.addEventListener('drop', (event) => addFiles(event.dataTransfer.files || []))
 
+    loadBaiduCredentials()
+    loadAliyunCredentials()
     checkServer()
-    refreshChatgptStatus()
-    setInterval(refreshChatgptStatus, 15000)
+    updateEngineMode()
+    if (!embeddedMode) {
+      refreshChatgptStatus()
+      setInterval(refreshChatgptStatus, 15000)
+    } else {
+      postEmbeddedMessage({ type: 'image-workshop-ready' })
+    }
     render()
   </script>
 </body>

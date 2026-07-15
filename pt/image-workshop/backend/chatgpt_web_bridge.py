@@ -32,6 +32,7 @@ _JOBS: Dict[str, Dict[str, Any]] = {}
 _JOBS_LOCK = threading.Lock()
 _HIDDEN_CHROME_PROCESS: Optional[subprocess.Popen[Any]] = None
 _HIDDEN_CHROME_LOCK = threading.Lock()
+_WORKSHOP_TARGET_IDS: Dict[str, str] = {}
 
 
 class ChatGPTBridgeError(RuntimeError):
@@ -329,7 +330,7 @@ def open_chatgpt_page(browser_mode: str = "visible") -> Dict[str, Any]:
     if mode == "hidden":
         _ensure_hidden_browser()
         _sync_hidden_cookies_from_visible()
-    target = _get_or_create_chatgpt_target(mode)
+    target = _get_or_create_chatgpt_target(mode, dedicated=True)
     if mode == "visible":
         try:
             _cdp_http_json("visible", f"/json/activate/{target['id']}", timeout=2)
@@ -443,7 +444,7 @@ def run_chatgpt_web_generation(
         _ensure_hidden_browser()
         progress("同步 ChatGPT 登录")
         _sync_hidden_cookies_from_visible()
-    target = _get_or_create_chatgpt_target(mode)
+    target = _get_or_create_chatgpt_target(mode, dedicated=True)
     session = CdpSession(str(target["webSocketDebuggerUrl"]))
     try:
         session.call("Page.enable")
@@ -504,17 +505,46 @@ def _list_pages(browser_mode: str = "visible") -> List[Dict[str, Any]]:
     return _cdp_http_json(browser_mode, "/json", timeout=4)
 
 
-def _get_or_create_chatgpt_target(browser_mode: str = "visible") -> Dict[str, Any]:
+def _get_or_create_chatgpt_target(browser_mode: str = "visible", dedicated: bool = False) -> Dict[str, Any]:
     mode = _normalize_browser_mode(browser_mode)
+    if dedicated:
+        target = _remembered_chatgpt_target(mode)
+        if target:
+            return target
+        return _create_chatgpt_target(mode)
+
     pages = _list_pages(mode)
     for page in pages:
         if page.get("type") == "page" and "chatgpt.com" in str(page.get("url") or ""):
             if page.get("webSocketDebuggerUrl"):
                 return page
 
+    return _create_chatgpt_target(mode)
+
+
+def _remembered_chatgpt_target(mode: str) -> Optional[Dict[str, Any]]:
+    target_id = _WORKSHOP_TARGET_IDS.get(mode)
+    if not target_id:
+        return None
+    pages = _list_pages(mode)
+    for page in pages:
+        if (
+            page.get("id") == target_id
+            and page.get("type") == "page"
+            and "chatgpt.com" in str(page.get("url") or "")
+            and page.get("webSocketDebuggerUrl")
+        ):
+            return page
+    _WORKSHOP_TARGET_IDS.pop(mode, None)
+    return None
+
+
+def _create_chatgpt_target(mode: str) -> Dict[str, Any]:
     target = _cdp_http_json(mode, f"/json/new?{quote(CHATGPT_URL, safe=':/?=&')}", method="PUT", timeout=5)
     if not target.get("webSocketDebuggerUrl"):
         raise ChatGPTBridgeError("无法创建 ChatGPT 标签页")
+    if target.get("id"):
+        _WORKSHOP_TARGET_IDS[mode] = str(target["id"])
     return target
 
 
@@ -920,11 +950,18 @@ def _wait_for_result_image(session: CdpSession, baseline_images: List[str]) -> D
               }}
               const busy = Boolean(document.querySelector('[data-testid="stop-button"], [aria-label*="Stop"], [aria-label*="停止"]'));
               const text = (document.body ? document.body.innerText : '').slice(-1200);
-              return {{ candidate, busy, text }};
+              const errorMatch = text.match(
+                /We experienced an error when generating images|Something went wrong while generating|There was an error generating|图片生成.*失败|生成图片.*失败|生成图像.*失败|无法生成图片|出错了|出现错误/i
+              );
+              return {{ candidate, busy, text, errorText: errorMatch ? errorMatch[0] : '' }};
             }})()
             """,
             timeout=5,
         ) or {}
+        error_text = str(result.get("errorText") or "").strip()
+        if error_text:
+            raise ChatGPTBridgeError(f"ChatGPT 生成图片失败：{error_text}")
+
         candidate = result.get("candidate")
         if candidate and candidate.get("src") == last_src:
             if not stable_since:

@@ -1,0 +1,1728 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地商品页工作台</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: rgba(255, 255, 255, 0.9);
+      --line: #e2e8f0;
+      --text: #111827;
+      --muted: #64748b;
+      --muted-2: #94a3b8;
+      --primary: #2563eb;
+      --orange: #f97316;
+      --green: #16a34a;
+      --danger: #dc2626;
+      --shadow: 0 20px 70px rgba(15, 23, 42, 0.09);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(to right, rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+        radial-gradient(circle at 16% 0%, rgba(37, 99, 235, 0.09), transparent 22%),
+        linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
+      background-size: 44px 44px, 44px 44px, auto, auto;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .page {
+      width: min(1520px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 28px 0 44px;
+    }
+
+    .topbar,
+    .quick-flow,
+    .panel {
+      border: 1px solid rgba(226, 232, 240, 0.94);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 28px;
+      border-radius: 28px;
+    }
+
+    .eyebrow {
+      color: var(--primary);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 5px 0 8px;
+      font-size: 36px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .topbar p {
+      max-width: 780px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.72;
+    }
+
+    .top-actions,
+    .row-actions,
+    .editor-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--text);
+      padding: 9px 14px;
+      font-size: 14px;
+      font-weight: 800;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+
+    .button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    .button.primary {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .button.dark {
+      border-color: #111827;
+      background: #111827;
+      color: #fff;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .quick-flow {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.92fr) minmax(320px, 1.35fr) minmax(280px, 0.92fr);
+      gap: 18px;
+      margin-top: 22px;
+      padding: 18px;
+      border-radius: 28px;
+    }
+
+    .quick-card {
+      min-width: 0;
+      border-radius: 22px;
+      background: #f8fafc;
+      padding: 16px;
+    }
+
+    .dropzone {
+      display: grid;
+      place-items: center;
+      min-height: 190px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.72);
+      text-align: center;
+    }
+
+    .dropzone input {
+      display: none;
+    }
+
+    .upload-empty {
+      display: grid;
+      gap: 8px;
+      justify-items: center;
+      color: var(--muted);
+    }
+
+    .upload-icon {
+      display: grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      background: #fff;
+      color: #111827;
+      font-size: 24px;
+      font-weight: 900;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    .upload-empty strong {
+      color: var(--text);
+    }
+
+    .asset-preview {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      padding: 12px;
+      text-align: left;
+    }
+
+    .asset-preview img {
+      width: 98px;
+      height: 98px;
+      border-radius: 18px;
+      object-fit: cover;
+    }
+
+    .asset-preview strong,
+    .asset-preview span,
+    .asset-preview small {
+      display: block;
+    }
+
+    .asset-preview span,
+    .asset-preview small {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .row-actions {
+      margin-top: 14px;
+    }
+
+    .row-actions .primary {
+      flex: 1;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .panel-title strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .bridge-row {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .status-line {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--muted);
+      padding: 10px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .status-line.ok {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #15803d;
+    }
+
+    .status-line.error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 999px;
+      background: var(--primary);
+    }
+
+    .dot.orange {
+      background: var(--orange);
+    }
+
+    .analysis-grid,
+    .config-grid,
+    .editor-form {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .analysis-grid,
+    .config-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    label.field {
+      display: grid;
+      min-width: 0;
+      gap: 7px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 82px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+
+    .empty-note {
+      display: grid;
+      place-items: center;
+      min-height: 150px;
+      color: var(--muted-2);
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 320px minmax(520px, 1fr);
+      gap: 18px;
+      align-items: stretch;
+      min-height: 760px;
+      margin-top: 22px;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border-radius: 28px;
+      padding: 18px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-head strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .panel-head span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .section-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 755px;
+      margin-top: 16px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .section-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      color: inherit;
+      padding: 14px;
+      text-align: left;
+    }
+
+    .section-item.active {
+      border-color: #111827;
+      box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    .section-index {
+      color: var(--muted-2);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .section-item strong,
+    .section-item small {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .section-item small {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .status.done {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .status.generating {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+
+    .current-result {
+      display: grid;
+      place-items: center;
+      min-height: 190px;
+      margin-top: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: #f8fafc;
+    }
+
+    .current-result img {
+      width: 100%;
+      max-height: 260px;
+      object-fit: contain;
+    }
+
+    .current-result .empty-note {
+      padding: 18px;
+    }
+
+    .editor-actions,
+    .version-box {
+      margin-top: 16px;
+    }
+
+    .version-box {
+      border-radius: 18px;
+      background: #f8fafc;
+      padding: 14px;
+    }
+
+    .version-box div {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .version-box p,
+    .version-box span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 50;
+      display: none;
+      border-radius: 16px;
+      background: #111827;
+      color: #fff;
+      padding: 12px 16px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.24);
+      font-weight: 800;
+    }
+
+    .toast.show {
+      display: block;
+    }
+
+    @media (max-width: 1280px) {
+      .quick-flow,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .section-list {
+        max-height: 360px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100vw - 20px, 1520px);
+      }
+
+      .topbar {
+        flex-direction: column;
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .analysis-grid,
+      .config-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">本地图片工坊 · 商品详情页生成</div>
+        <h1>AI 商品页工作台</h1>
+        <p>上传一张商品图后，先生成可编辑的商品分析和页面模块，再把单个模块或整组模块发送给网页版 GPT 生成真实电商图。</p>
+      </div>
+      <div class="top-actions">
+        <a class="button" href="/">返回旧做图工具</a>
+        <a class="button dark" href="http://127.0.0.1:3000">原型项目</a>
+        <span class="tag">ChatGPT web</span>
+        <button class="button" id="replanButton" disabled>重新规划</button>
+        <button class="button primary" id="exportButton" disabled>导出图片</button>
+      </div>
+    </header>
+
+    <section class="quick-flow">
+      <div class="quick-card">
+        <label class="dropzone" for="fileInput">
+          <input id="fileInput" type="file" accept="image/*">
+          <div class="upload-empty" id="uploadEmpty">
+            <div class="upload-icon">IMG</div>
+            <strong>上传产品主图</strong>
+            <span>支持 JPG、PNG、WEBP，建议使用清晰白底图。</span>
+          </div>
+          <div class="asset-preview" id="assetPreview" hidden>
+            <img id="assetPreviewImage" alt="商品图预览">
+            <div>
+              <strong id="assetName"></strong>
+              <span id="assetSize"></span>
+              <small>点击可重新选择主商品图</small>
+            </div>
+          </div>
+        </label>
+        <div class="row-actions">
+          <button class="button primary" id="generateAllButton" disabled>生成详情页方案</button>
+          <button class="button" id="demoButton">使用演示商品</button>
+          <button class="button" id="clearButton" disabled>清空</button>
+        </div>
+      </div>
+
+      <div class="quick-card">
+        <div class="panel-title">
+          <div><span class="dot"></span><strong>商品分析</strong></div>
+          <span class="tag" id="analysisState">等待上传</span>
+        </div>
+        <div id="analysisEmpty" class="empty-note">上传商品图后会自动生成可编辑的商品信息、卖点和页面模块。</div>
+        <div class="analysis-grid" id="analysisGrid" hidden>
+          <label class="field">商品名称 <input id="productNameInput"></label>
+          <label class="field">品类 <input id="categoryInput"></label>
+          <label class="field wide">核心卖点 <textarea id="sellingPointsInput"></textarea></label>
+          <label class="field wide">使用场景 <textarea id="scenariosInput"></textarea></label>
+        </div>
+      </div>
+
+      <div class="quick-card">
+        <div class="panel-title">
+          <div><span class="dot orange"></span><strong>输出配置</strong></div>
+          <span class="tag" id="moduleCount">0 个模块</span>
+        </div>
+        <div class="config-grid">
+          <label class="field">头图数量
+            <select id="heroCountSelect">
+              <option value="3">3 张</option>
+              <option value="4">4 张</option>
+              <option value="5">5 张</option>
+            </select>
+          </label>
+          <label class="field">详情图数量
+            <select id="detailCountSelect">
+              <option value="4">4 张</option>
+              <option value="6">6 张</option>
+              <option value="8">8 张</option>
+            </select>
+          </label>
+          <label class="field">详情比例
+            <select id="ratioSelect">
+              <option value="9:16">9:16</option>
+              <option value="3:4">3:4</option>
+            </select>
+          </label>
+          <label class="field">文案语言
+            <select id="languageSelect">
+              <option value="zh">简体中文</option>
+              <option value="ru">俄语</option>
+              <option value="en">英语</option>
+            </select>
+          </label>
+          <label class="field">出图方式
+            <select id="generationModeSelect">
+              <option value="chatgpt">真实 GPT 出图</option>
+              <option value="local">本地预览图</option>
+            </select>
+          </label>
+          <label class="field">GPT 浏览器
+            <select id="browserModeSelect">
+              <option value="visible">当前 9222 Chrome</option>
+            </select>
+          </label>
+          <div class="bridge-row">
+            <div class="status-line" id="chatgptStatus">网页版 GPT：检测中</div>
+            <button class="button" id="openChatgptButton" type="button">打开 ChatGPT</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <aside class="panel">
+        <div class="panel-head">
+          <div>
+            <strong>模块结构树</strong>
+            <span id="sectionSummary">0 头图 · 0 详情图</span>
+          </div>
+          <button class="button" id="addSectionButton" disabled>新增</button>
+        </div>
+        <div id="sectionList" class="section-list"></div>
+        <div id="treeEmpty" class="empty-note">上传图片后，这里会出现头图和详情模块。</div>
+      </aside>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <div>
+            <strong>模块编辑面板</strong>
+            <span>调整文案、Prompt，并单独生成当前模块。</span>
+          </div>
+        </div>
+
+        <div id="editorEmpty" class="empty-note">请选择一个模块开始编辑。</div>
+        <div id="editorContent" hidden>
+          <div class="current-result" id="currentResult">
+            <div class="empty-note">当前模块尚未生成图片</div>
+          </div>
+
+          <div class="editor-form">
+            <label class="field">类型
+              <select id="sectionTypeInput">
+                <option value="hero">头图主视觉</option>
+                <option value="selling_points">卖点模块</option>
+                <option value="scenario">场景展示</option>
+                <option value="detail_closeup">细节特写</option>
+                <option value="specs">规格参数</option>
+                <option value="comparison">对比说明</option>
+                <option value="brand_trust">品牌信任</option>
+                <option value="summary">总结收口</option>
+              </select>
+            </label>
+            <label class="field">标题 <input id="sectionTitleInput"></label>
+            <label class="field">模块目标 <input id="sectionGoalInput"></label>
+            <label class="field">模块文案 <textarea id="sectionCopyInput"></textarea></label>
+            <label class="field">双语视觉 Prompt <textarea id="sectionPromptInput"></textarea></label>
+          </div>
+
+          <div class="editor-actions">
+            <button class="button primary" id="generateSelectedButton">生成当前模块图</button>
+            <button class="button" id="downloadSelectedButton" disabled>下载</button>
+          </div>
+
+          <div class="version-box">
+            <div><strong>版本历史</strong><span id="versionCount">0 个版本</span></div>
+            <p>第一版先记录版本数量；下一阶段接数据库后可切换历史版本。</p>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      asset: null,
+      projectName: "未命名商品项目",
+      analysis: null,
+      sections: [],
+      selectedId: "",
+      generatingAll: false,
+      config: {
+        heroCount: 3,
+        detailCount: 4,
+        ratio: "9:16",
+        generationMode: "chatgpt",
+        browserMode: "visible",
+        language: "zh"
+      }
+    };
+
+    const sectionLabels = {
+      hero: "头图主视觉",
+      selling_points: "卖点模块",
+      scenario: "场景展示",
+      detail_closeup: "细节特写",
+      specs: "规格参数",
+      comparison: "对比说明",
+      brand_trust: "品牌信任",
+      summary: "总结收口"
+    };
+
+    const el = {
+      fileInput: document.querySelector("#fileInput"),
+      uploadEmpty: document.querySelector("#uploadEmpty"),
+      assetPreview: document.querySelector("#assetPreview"),
+      assetPreviewImage: document.querySelector("#assetPreviewImage"),
+      assetName: document.querySelector("#assetName"),
+      assetSize: document.querySelector("#assetSize"),
+      generateAllButton: document.querySelector("#generateAllButton"),
+      demoButton: document.querySelector("#demoButton"),
+      clearButton: document.querySelector("#clearButton"),
+      replanButton: document.querySelector("#replanButton"),
+      exportButton: document.querySelector("#exportButton"),
+      analysisState: document.querySelector("#analysisState"),
+      analysisEmpty: document.querySelector("#analysisEmpty"),
+      analysisGrid: document.querySelector("#analysisGrid"),
+      productNameInput: document.querySelector("#productNameInput"),
+      categoryInput: document.querySelector("#categoryInput"),
+      sellingPointsInput: document.querySelector("#sellingPointsInput"),
+      scenariosInput: document.querySelector("#scenariosInput"),
+      heroCountSelect: document.querySelector("#heroCountSelect"),
+      detailCountSelect: document.querySelector("#detailCountSelect"),
+      ratioSelect: document.querySelector("#ratioSelect"),
+      generationModeSelect: document.querySelector("#generationModeSelect"),
+      browserModeSelect: document.querySelector("#browserModeSelect"),
+      languageSelect: document.querySelector("#languageSelect"),
+      chatgptStatus: document.querySelector("#chatgptStatus"),
+      openChatgptButton: document.querySelector("#openChatgptButton"),
+      moduleCount: document.querySelector("#moduleCount"),
+      sectionSummary: document.querySelector("#sectionSummary"),
+      sectionList: document.querySelector("#sectionList"),
+      treeEmpty: document.querySelector("#treeEmpty"),
+      addSectionButton: document.querySelector("#addSectionButton"),
+      editorEmpty: document.querySelector("#editorEmpty"),
+      editorContent: document.querySelector("#editorContent"),
+      currentResult: document.querySelector("#currentResult"),
+      sectionTypeInput: document.querySelector("#sectionTypeInput"),
+      sectionTitleInput: document.querySelector("#sectionTitleInput"),
+      sectionGoalInput: document.querySelector("#sectionGoalInput"),
+      sectionCopyInput: document.querySelector("#sectionCopyInput"),
+      sectionPromptInput: document.querySelector("#sectionPromptInput"),
+      generateSelectedButton: document.querySelector("#generateSelectedButton"),
+      downloadSelectedButton: document.querySelector("#downloadSelectedButton"),
+      versionCount: document.querySelector("#versionCount"),
+      toast: document.querySelector("#toast")
+    };
+
+    function showToast(message) {
+      el.toast.textContent = message;
+      el.toast.classList.add("show");
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => el.toast.classList.remove("show"), 2200);
+    }
+
+    function setChatgptStatus(message, kind = "") {
+      el.chatgptStatus.textContent = message;
+      el.chatgptStatus.className = `status-line${kind ? ` ${kind}` : ""}`;
+    }
+
+    async function refreshChatgptStatus() {
+      if (state.config.generationMode !== "chatgpt") {
+        setChatgptStatus("当前为本地预览模式，不会调用 GPT");
+        return;
+      }
+      try {
+        const response = await fetch(`/chatgpt/status?browser_mode=${encodeURIComponent(state.config.browserMode)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "检测失败");
+        if (!data.browser_connected) {
+          setChatgptStatus(`网页版 GPT：${data.detail || "Chrome 未连接"}`, "error");
+        } else if (data.chatgpt_tab) {
+          setChatgptStatus("网页版 GPT：已连接，ChatGPT 已打开", "ok");
+        } else {
+          setChatgptStatus("网页版 GPT：已连接，未打开 ChatGPT");
+        }
+      } catch (error) {
+        setChatgptStatus(`网页版 GPT：${error instanceof Error ? error.message : "无法检测"}`, "error");
+      }
+    }
+
+    async function openChatgpt() {
+      setChatgptStatus("网页版 GPT：正在打开 ChatGPT");
+      try {
+        const response = await fetch(`/chatgpt/open?browser_mode=${encodeURIComponent(state.config.browserMode)}`, {
+          method: "POST"
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "打开失败");
+        setChatgptStatus("网页版 GPT：已打开，请确认已登录", "ok");
+      } catch (error) {
+        setChatgptStatus(`网页版 GPT：${error instanceof Error ? error.message : "打开失败"}`, "error");
+      }
+    }
+
+    function createId(prefix) {
+      const value = crypto && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(16);
+      return `${prefix}_${value}`;
+    }
+
+    function splitLines(value) {
+      return value.split("\n").map((item) => item.trim()).filter(Boolean);
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
+    function sanitizeBaseName(name) {
+      return name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    }
+
+    function inferProductName(name) {
+      const base = sanitizeBaseName(name);
+      if (!base || /^\d+$/.test(base)) return "精选商品";
+      return base.length > 20 ? base.slice(0, 20) : base;
+    }
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("图片加载失败"));
+        image.src = url;
+      });
+    }
+
+    function releaseAssetUrl() {
+      if (state.asset?.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(state.asset.url);
+      }
+    }
+
+    function createDemoProductDataUrl() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const context = canvas.getContext("2d");
+      const gradient = context.createLinearGradient(0, 0, 1024, 1024);
+      gradient.addColorStop(0, "#ecfeff");
+      gradient.addColorStop(0.48, "#ffffff");
+      gradient.addColorStop(1, "#fff7ed");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 1024, 1024);
+
+      context.save();
+      context.globalAlpha = 0.18;
+      context.fillStyle = "#2563eb";
+      context.beginPath();
+      context.arc(826, 190, 118, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#f97316";
+      context.beginPath();
+      context.arc(188, 818, 170, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+
+      context.save();
+      context.shadowColor = "rgba(15, 23, 42, 0.16)";
+      context.shadowBlur = 42;
+      context.shadowOffsetY = 24;
+      roundRect(context, 310, 220, 310, 580, 54);
+      context.fillStyle = "#ffffff";
+      context.fill();
+      roundRect(context, 360, 180, 210, 80, 36);
+      context.fillStyle = "#e0f2fe";
+      context.fill();
+      roundRect(context, 390, 134, 150, 78, 28);
+      context.fillStyle = "#0f172a";
+      context.fill();
+      roundRect(context, 334, 470, 262, 172, 34);
+      context.fillStyle = "#eff6ff";
+      context.fill();
+      context.fillStyle = "#2563eb";
+      context.font = '900 48px Arial, "PingFang SC", sans-serif';
+      context.textAlign = "center";
+      context.fillText("CLEAN", 465, 540);
+      context.fillStyle = "#64748b";
+      context.font = '700 26px Arial, "PingFang SC", sans-serif';
+      context.fillText("植物清洁喷雾", 465, 590);
+      context.restore();
+
+      context.save();
+      context.fillStyle = "#111827";
+      context.font = '900 58px Arial, "PingFang SC", sans-serif';
+      context.fillText("智能清洁喷雾", 90, 150);
+      context.fillStyle = "#64748b";
+      context.font = '700 28px Arial, "PingFang SC", sans-serif';
+      context.fillText("一喷即净 / 温和低味 / 多场景可用", 94, 196);
+      ["厨房油污", "桌面清洁", "浴室水渍"].forEach((text, index) => {
+        drawDemoChip(context, text, 92, 278 + index * 70, index === 0 ? "#2563eb" : "#f97316");
+      });
+      context.restore();
+
+      return canvas.toDataURL("image/png");
+    }
+
+    function drawDemoChip(context, text, x, y, color) {
+      context.save();
+      context.font = '800 25px Arial, "PingFang SC", sans-serif';
+      const width = context.measureText(text).width + 48;
+      roundRect(context, x, y, width, 50, 25);
+      context.fillStyle = `${color}18`;
+      context.fill();
+      context.fillStyle = color;
+      context.fillText(text, x + 24, y + 33);
+      context.restore();
+    }
+
+    async function useDemoProduct() {
+      releaseAssetUrl();
+      const url = createDemoProductDataUrl();
+      const image = await loadImage(url);
+      state.asset = {
+        file: null,
+        name: "demo-smart-cleaner.png",
+        url,
+        image,
+        width: image.naturalWidth,
+        height: image.naturalHeight
+      };
+      state.projectName = "智能清洁喷雾 商品页";
+      state.analysis = {
+        productName: "智能清洁喷雾",
+        category: "家居清洁用品",
+        material: "植物基配方与细腻雾化喷头",
+        styleTags: ["清爽", "高转化", "移动端友好"],
+        coreSellingPoints: ["一喷即净", "温和低味", "多场景可用"],
+        usageScenarios: ["厨房油污", "桌面清洁", "浴室水渍"],
+        userConcerns: ["是否伤手", "气味是否刺鼻", "清洁是否省力"]
+      };
+      state.sections = buildSections();
+      state.selectedId = state.sections[0]?.id || "";
+      render();
+      showToast("演示商品已生成规划，可点击真实生成或切到本地预览");
+    }
+
+    async function handleFile(file) {
+      if (!file || !file.type.startsWith("image/")) {
+        showToast("请上传图片文件");
+        return;
+      }
+      releaseAssetUrl();
+      const url = URL.createObjectURL(file);
+      try {
+        const image = await loadImage(url);
+        state.asset = {
+          file,
+          name: file.name,
+          url,
+          image,
+          width: image.naturalWidth,
+          height: image.naturalHeight
+        };
+        state.projectName = `${inferProductName(file.name)} 商品页`;
+        buildDraftProject();
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        showToast(error instanceof Error ? error.message : "图片读取失败");
+      }
+    }
+
+    function buildAnalysisFromImage(asset) {
+      const productName = inferProductName(asset.name);
+      const isSquare = Math.abs(asset.width - asset.height) < Math.max(asset.width, asset.height) * 0.08;
+      return {
+        productName,
+        category: isSquare ? "电商标准主图商品" : "长图素材商品",
+        material: "以图片主体材质为准",
+        styleTags: ["清爽", "高转化", "移动端友好"],
+        coreSellingPoints: ["主体清晰", "适合平台上架", "可快速拆分头图与详情图"],
+        usageScenarios: ["店铺主图", "商品详情页", "广告素材"],
+        userConcerns: ["图片是否清晰", "卖点是否一眼可懂", "是否适合移动端浏览"]
+      };
+    }
+
+    function buildDraftProject() {
+      if (!state.asset) return;
+      state.analysis = buildAnalysisFromImage(state.asset);
+      state.sections = buildSections();
+      state.selectedId = state.sections[0]?.id || "";
+      render();
+      showToast("已生成商品分析和详情页规划");
+    }
+
+    function buildSections() {
+      const product = state.analysis?.productName || state.projectName;
+      const points = state.analysis?.coreSellingPoints || [];
+      const scenarios = state.analysis?.usageScenarios || [];
+      const heroTemplates = [
+        {
+          type: "hero",
+          title: "第一屏主视觉",
+          goal: "快速建立商品记忆点，突出第一眼吸引力。",
+          copy: points[0] || "主体清晰，一眼看懂。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的 1:1 电商头图，商品居中，标题和卖点直接排进画面。\nEnglish Prompt: Create a square ecommerce hero image with the product centered, clear headline, concise selling points, and premium clean background.`
+        },
+        {
+          type: "hero",
+          title: "核心卖点头图",
+          goal: "把最值得购买的理由直接讲透。",
+          copy: points[1] || "高转化卖点，同屏表达。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的核心卖点头图，左侧标题，右侧商品，加入 3 个卖点标签。\nEnglish Prompt: Create a conversion-focused hero image with product and three selling point callouts.`
+        },
+        {
+          type: "hero",
+          title: "场景氛围头图",
+          goal: "让用户快速代入使用场景。",
+          copy: scenarios[0] || "适合多场景展示。",
+          visualPrompt: `Primary Prompt: 将 ${product} 放入真实使用场景，画面干净，有生活方式氛围。\nEnglish Prompt: Place the product in a realistic lifestyle scene with polished commercial composition.`
+        },
+        {
+          type: "hero",
+          title: "品质信任头图",
+          goal: "通过细节和质感建立第一屏信任。",
+          copy: "细节质感，放心选择。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的品质信任头图，突出材质、细节和品牌感。\nEnglish Prompt: Create a craftsmanship-focused square hero image showing premium details and trust-building copy.`
+        },
+        {
+          type: "hero",
+          title: "差异化亮点头图",
+          goal: "强调与普通选择不同的购买理由。",
+          copy: "更清晰，更好用，更适合上架。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的差异化对比头图，突出独特优势和行动号召。\nEnglish Prompt: Create a differentiation hero image with comparison-style messaging and CTA.`
+        }
+      ];
+      const detailTemplates = [
+        {
+          type: "selling_points",
+          title: "三大亮点",
+          goal: "快速讲清楚购买理由。",
+          copy: points.slice(0, 3).join(" / ") || "清晰主体 / 高效表达 / 适合上架",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的卖点详情图，三段式卖点卡片，商品主体清晰。\nEnglish Prompt: Create a vertical ecommerce selling-points section with product and three clear benefit cards.`
+        },
+        {
+          type: "detail_closeup",
+          title: "细节必看",
+          goal: "强化材质、结构和真实质感。",
+          copy: "放大关键细节，让品质感更直观。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的细节特写详情图，包含局部放大框和短说明。\nEnglish Prompt: Create a close-up detail section with magnified callouts and concise explanations.`
+        },
+        {
+          type: "scenario",
+          title: "场景展示",
+          goal: "让用户代入真实使用场景。",
+          copy: scenarios.slice(0, 2).join(" / ") || "多场景使用，展示更直观。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的使用场景详情图，商品与真实环境结合。\nEnglish Prompt: Create a lifestyle scenario section that shows the product in use.`
+        },
+        {
+          type: "specs",
+          title: "规格说明",
+          goal: "把尺寸、材质和适配信息讲清楚。",
+          copy: "参数清晰，减少咨询成本。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的规格参数图，包含参数卡片和尺寸说明。\nEnglish Prompt: Create a specification section with clean parameter cards and product diagram.`
+        },
+        {
+          type: "comparison",
+          title: "优势对比",
+          goal: "帮助用户更快完成决策。",
+          copy: "对比普通方案，突出本品优势。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的对比说明图，左右对比版式，突出优势。\nEnglish Prompt: Create a comparison section with side-by-side advantages.`
+        },
+        {
+          type: "brand_trust",
+          title: "品质保障",
+          goal: "提升成交信任感。",
+          copy: "稳定品质，放心下单。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的品牌信任详情图，克制高级，突出服务承诺。\nEnglish Prompt: Create a brand trust section with quality assurance and service promise.`
+        },
+        {
+          type: "summary",
+          title: "购买理由总结",
+          goal: "形成最后一轮转化推动。",
+          copy: "现在下单，快速获得完整商品体验。",
+          visualPrompt: `Primary Prompt: 生成 ${product} 的总结收口图，包含购买理由和行动号召。\nEnglish Prompt: Create a closing conversion section with product, reasons to buy, and CTA.`
+        }
+      ];
+
+      return [
+        ...heroTemplates.slice(0, state.config.heroCount),
+        ...detailTemplates.slice(0, state.config.detailCount)
+      ].map((section, index) => ({
+        ...section,
+        id: createId(index < state.config.heroCount ? "hero" : "detail"),
+        status: "idle",
+        imageUrl: "",
+        engine: "",
+        stage: "",
+        error: "",
+        resultText: "",
+        versionCount: 0
+      }));
+    }
+
+    function syncAnalysisFromInputs() {
+      if (!state.analysis) return;
+      state.analysis.productName = el.productNameInput.value.trim() || state.analysis.productName;
+      state.analysis.category = el.categoryInput.value.trim() || state.analysis.category;
+      state.analysis.coreSellingPoints = splitLines(el.sellingPointsInput.value);
+      state.analysis.usageScenarios = splitLines(el.scenariosInput.value);
+    }
+
+    function syncSectionFromInputs() {
+      const section = selectedSection();
+      if (!section) return;
+      section.type = el.sectionTypeInput.value;
+      section.title = el.sectionTitleInput.value;
+      section.goal = el.sectionGoalInput.value;
+      section.copy = el.sectionCopyInput.value;
+      section.visualPrompt = el.sectionPromptInput.value;
+      render();
+    }
+
+    function selectedSection() {
+      return state.sections.find((section) => section.id === state.selectedId) || null;
+    }
+
+    function heroSections() {
+      return state.sections.filter((section) => section.type === "hero");
+    }
+
+    function detailSections() {
+      return state.sections.filter((section) => section.type !== "hero");
+    }
+
+    function generatedCount() {
+      return state.sections.filter((section) => section.imageUrl).length;
+    }
+
+    async function generateAllSections() {
+      if (!state.asset) {
+        showToast("请先上传产品主图");
+        return;
+      }
+      if (!state.sections.length) buildDraftProject();
+      state.generatingAll = true;
+      render();
+      try {
+        for (const section of state.sections) {
+          await generateSection(section);
+        }
+        const failed = state.sections.filter((section) => section.status === "error").length;
+        showToast(failed ? `生成结束，${failed} 个模块失败` : "全部模块图已生成");
+      } finally {
+        state.generatingAll = false;
+        render();
+      }
+    }
+
+    async function generateSelectedSection() {
+      const section = selectedSection();
+      if (!section) return;
+      await generateSection(section);
+      render();
+    }
+
+    async function generateSection(section) {
+      if (!state.asset || !state.analysis) return;
+      if (state.config.generationMode === "local") {
+        await generateSectionLocally(section);
+        return;
+      }
+      await generateSectionWithChatGPT(section);
+    }
+
+    async function generateSectionLocally(section) {
+      section.status = "generating";
+      section.stage = "本地预览生成";
+      section.error = "";
+      render();
+      await sleep(120);
+      try {
+        section.imageUrl = composeSectionImage(section, state.asset, state.analysis);
+        section.engine = "local-preview";
+        section.stage = "";
+        section.status = "done";
+        section.versionCount += 1;
+      } catch (error) {
+        section.status = "error";
+        section.stage = "";
+        section.error = error instanceof Error ? error.message : "模块图生成失败";
+        showToast(error instanceof Error ? error.message : "模块图生成失败");
+      }
+    }
+
+    async function generateSectionWithChatGPT(section) {
+      section.status = "generating";
+      section.stage = "提交网页版 GPT";
+      section.error = "";
+      section.resultText = "";
+      render();
+
+      try {
+        const payload = new FormData();
+        payload.append("file", assetFileForUpload());
+        payload.append("prompt", buildSectionPrompt(section));
+        payload.append("browser_mode", state.config.browserMode);
+
+        const response = await fetch("/chatgpt/jobs", {
+          method: "POST",
+          body: payload
+        });
+        const created = await response.json();
+        if (!response.ok) throw new Error(created.detail || "提交失败");
+
+        let job = created;
+        while (job.status !== "done" && job.status !== "error") {
+          section.stage = job.stage || "等待网页 GPT";
+          render();
+          await sleep(2000);
+          const poll = await fetch(`/chatgpt/jobs/${encodeURIComponent(job.id)}`);
+          job = await poll.json();
+          if (!poll.ok) throw new Error(job.detail || "读取任务失败");
+        }
+
+        if (job.status === "error") throw new Error(job.error || "网页版 GPT 处理失败");
+        if (!job.result_image) throw new Error("网页版 GPT 没有返回图片");
+
+        section.imageUrl = job.result_image;
+        section.engine = "chatgpt-web";
+        section.stage = "";
+        section.error = "";
+        section.resultText = job.result_text || "";
+        section.status = "done";
+        section.versionCount += 1;
+      } catch (error) {
+        section.status = "error";
+        section.stage = "";
+        section.error = error instanceof Error ? error.message : String(error);
+        showToast(`${section.title}：${section.error}`);
+      } finally {
+        refreshChatgptStatus();
+      }
+    }
+
+    function assetFileForUpload() {
+      if (state.asset?.file) return state.asset.file;
+      if (!state.asset?.url) throw new Error("请先上传产品主图");
+      const blob = dataUrlToBlob(state.asset.url);
+      return new File([blob], state.asset.name || "product.png", { type: blob.type || "image/png" });
+    }
+
+    function dataUrlToBlob(dataUrl) {
+      const [meta, data] = String(dataUrl).split(",");
+      if (!meta || !data) throw new Error("演示图片数据无效");
+      const mime = /data:([^;]+)/.exec(meta)?.[1] || "image/png";
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], { type: mime });
+    }
+
+    function buildSectionPrompt(section) {
+      const languageName = {
+        zh: "简体中文",
+        ru: "俄语",
+        en: "英语"
+      }[state.config.language] || "简体中文";
+      const outputRatio = section.type === "hero" ? "1:1 方图" : state.config.ratio;
+      const points = state.analysis.coreSellingPoints.join("、") || section.copy;
+      const scenarios = state.analysis.usageScenarios.join("、") || "电商详情页";
+      return [
+        "请基于我上传的商品图，生成一张可直接用于电商上架的商品图片。",
+        "",
+        `商品名称：${state.analysis.productName}`,
+        `商品品类：${state.analysis.category}`,
+        `核心卖点：${points}`,
+        `使用场景：${scenarios}`,
+        "",
+        `当前模块：${section.title}`,
+        `模块类型：${sectionLabels[section.type] || section.type}`,
+        `模块目标：${section.goal}`,
+        `模块文案：${section.copy}`,
+        `输出画幅：${outputRatio}`,
+        `画面文字语言：${languageName}`,
+        "",
+        "生成要求：",
+        "1. 保留上传图片中的商品主体识别度，不要把商品变成无关物品。",
+        "2. 生成完整电商成品图，画面里直接排版标题、卖点和简洁说明。",
+        "3. 构图清晰、商业感强、移动端可读，避免水印、二维码、联系方式和平台 Logo。",
+        "4. 头图以商品主视觉和成交理由为主；详情图按模块目标展示细节、卖点或场景。",
+        "5. 如果需要补充背景，请使用干净真实的商业摄影/电商详情页风格。",
+        "",
+        section.visualPrompt
+      ].join("\n");
+    }
+
+    function paletteForSection(section) {
+      const palettes = [
+        { bgStart: "#fff7ed", bgMid: "#fef3c7", bgEnd: "#ffffff", accent: "#f97316", ink: "#1f2937", muted: "#6b7280" },
+        { bgStart: "#eff6ff", bgMid: "#dbeafe", bgEnd: "#ffffff", accent: "#2563eb", ink: "#172554", muted: "#64748b" },
+        { bgStart: "#f0fdf4", bgMid: "#dcfce7", bgEnd: "#ffffff", accent: "#16a34a", ink: "#14532d", muted: "#64748b" },
+        { bgStart: "#fdf2f8", bgMid: "#fce7f3", bgEnd: "#ffffff", accent: "#db2777", ink: "#3f1d2f", muted: "#715064" },
+        { bgStart: "#f8fafc", bgMid: "#e2e8f0", bgEnd: "#ffffff", accent: "#0f172a", ink: "#111827", muted: "#64748b" }
+      ];
+      return palettes[Math.abs(section.title.length + section.copy.length) % palettes.length];
+    }
+
+    function composeSectionImage(section, asset, analysis) {
+      const isHero = section.type === "hero";
+      const width = isHero ? 1024 : state.config.ratio === "3:4" ? 900 : 768;
+      const height = isHero ? 1024 : state.config.ratio === "3:4" ? 1200 : 1344;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("无法创建画布");
+
+      const palette = paletteForSection(section);
+      const gradient = context.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, palette.bgStart);
+      gradient.addColorStop(0.55, palette.bgMid);
+      gradient.addColorStop(1, palette.bgEnd);
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, width, height);
+
+      drawDecor(context, width, height, palette);
+      drawBadge(context, isHero ? "AI 真图预览" : sectionLabels[section.type], 56, 52, palette.accent);
+      if (isHero) {
+        drawHeroComposition(context, width, height, section, asset, analysis, palette);
+      } else {
+        drawDetailComposition(context, width, height, section, asset, analysis, palette);
+      }
+      return canvas.toDataURL("image/png");
+    }
+
+    function drawDecor(context, width, height, palette) {
+      context.save();
+      context.globalAlpha = 0.16;
+      context.fillStyle = palette.accent;
+      context.beginPath();
+      context.arc(width * 0.88, height * 0.16, width * 0.15, 0, Math.PI * 2);
+      context.fill();
+      context.globalAlpha = 0.09;
+      context.beginPath();
+      context.arc(width * 0.15, height * 0.86, width * 0.22, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    }
+
+    function drawBadge(context, text, x, y, color) {
+      context.save();
+      context.font = '700 26px Arial, "PingFang SC", sans-serif';
+      const width = Math.max(180, context.measureText(text).width + 52);
+      roundRect(context, x, y, width, 54, 27);
+      context.fillStyle = color;
+      context.fill();
+      context.fillStyle = "#ffffff";
+      context.fillText(text, x + 26, y + 36);
+      context.restore();
+    }
+
+    function drawHeroComposition(context, width, height, section, asset, analysis, palette) {
+      context.save();
+      context.fillStyle = palette.ink;
+      context.font = '900 70px Arial, "PingFang SC", sans-serif';
+      wrapText(context, section.title, 58, 180, width * 0.55, 78, 2);
+      context.font = '600 30px Arial, "PingFang SC", sans-serif';
+      context.fillStyle = palette.muted;
+      wrapText(context, section.copy, 62, 350, width * 0.44, 42, 3);
+      drawImageContain(context, asset.image, width * 0.43, height * 0.25, width * 0.5, height * 0.48, 42);
+      analysis.coreSellingPoints.slice(0, 3).forEach((tag, index) => {
+        drawPill(context, tag, 70 + index * 10, height - 250 + index * 68, palette);
+      });
+      drawCta(context, "立即上架", width - 310, height - 150, palette.accent);
+      context.restore();
+    }
+
+    function drawDetailComposition(context, width, height, section, asset, analysis, palette) {
+      context.save();
+      context.fillStyle = palette.ink;
+      context.font = '900 56px Arial, "PingFang SC", sans-serif';
+      wrapText(context, section.title, 58, 150, width - 116, 66, 2);
+      context.font = '600 28px Arial, "PingFang SC", sans-serif';
+      context.fillStyle = palette.muted;
+      wrapText(context, section.goal, 60, 295, width - 120, 40, 2);
+      drawImageContain(context, asset.image, width * 0.12, height * 0.28, width * 0.76, height * 0.32, 48);
+      roundRect(context, 48, height * 0.66, width - 96, height * 0.22, 42);
+      context.fillStyle = "rgba(255,255,255,0.82)";
+      context.fill();
+      context.fillStyle = palette.accent;
+      context.font = '800 30px Arial, "PingFang SC", sans-serif';
+      context.fillText("核心亮点", 84, height * 0.71);
+      context.fillStyle = palette.ink;
+      context.font = '700 34px Arial, "PingFang SC", sans-serif';
+      wrapText(context, section.copy, 84, height * 0.76, width - 168, 46, 3);
+      analysis.userConcerns.slice(0, 2).forEach((item, index) => {
+        drawMiniChip(context, item, 84 + index * (width * 0.34), height * 0.91, palette);
+      });
+      context.restore();
+    }
+
+    function drawImageContain(context, image, x, y, width, height, radius) {
+      context.save();
+      roundRect(context, x, y, width, height, radius);
+      context.fillStyle = "rgba(255,255,255,0.72)";
+      context.shadowColor = "rgba(15, 23, 42, 0.18)";
+      context.shadowBlur = 34;
+      context.shadowOffsetY = 18;
+      context.fill();
+      context.clip();
+      const scale = Math.min((width * 0.86) / image.naturalWidth, (height * 0.86) / image.naturalHeight);
+      const drawWidth = image.naturalWidth * scale;
+      const drawHeight = image.naturalHeight * scale;
+      context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+      context.restore();
+    }
+
+    function drawPill(context, text, x, y, palette) {
+      context.save();
+      context.font = '700 28px Arial, "PingFang SC", sans-serif';
+      const width = Math.min(460, Math.max(210, context.measureText(text).width + 52));
+      roundRect(context, x, y, width, 58, 29);
+      context.fillStyle = "rgba(255,255,255,0.86)";
+      context.fill();
+      context.fillStyle = palette.accent;
+      context.fillText(text, x + 26, y + 38);
+      context.restore();
+    }
+
+    function drawMiniChip(context, text, x, y, palette) {
+      context.save();
+      context.font = '700 22px Arial, "PingFang SC", sans-serif';
+      const width = Math.min(230, Math.max(150, context.measureText(text).width + 34));
+      roundRect(context, x, y, width, 44, 22);
+      context.fillStyle = `${palette.accent}22`;
+      context.fill();
+      context.fillStyle = palette.accent;
+      context.fillText(text, x + 17, y + 29);
+      context.restore();
+    }
+
+    function drawCta(context, text, x, y, color) {
+      context.save();
+      roundRect(context, x, y, 230, 70, 35);
+      context.fillStyle = color;
+      context.fill();
+      context.fillStyle = "#ffffff";
+      context.font = '900 30px Arial, "PingFang SC", sans-serif';
+      context.textAlign = "center";
+      context.fillText(text, x + 115, y + 45);
+      context.restore();
+    }
+
+    function roundRect(context, x, y, width, height, radius) {
+      const safeRadius = Math.min(radius, width / 2, height / 2);
+      context.beginPath();
+      context.moveTo(x + safeRadius, y);
+      context.arcTo(x + width, y, x + width, y + height, safeRadius);
+      context.arcTo(x + width, y + height, x, y + height, safeRadius);
+      context.arcTo(x, y + height, x, y, safeRadius);
+      context.arcTo(x, y, x + width, y, safeRadius);
+      context.closePath();
+    }
+
+    function wrapText(context, text, x, y, maxWidth, lineHeight, maxLines) {
+      const chars = Array.from(String(text));
+      let line = "";
+      let lineCount = 0;
+      for (const char of chars) {
+        const testLine = line + char;
+        if (context.measureText(testLine).width > maxWidth && line) {
+          context.fillText(line, x, y + lineCount * lineHeight);
+          line = char;
+          lineCount += 1;
+          if (lineCount >= maxLines) return;
+        } else {
+          line = testLine;
+        }
+      }
+      if (line && lineCount < maxLines) context.fillText(line, x, y + lineCount * lineHeight);
+    }
+
+    function render() {
+      const hasAsset = Boolean(state.asset);
+      el.uploadEmpty.hidden = hasAsset;
+      el.assetPreview.hidden = !hasAsset;
+      if (state.asset) {
+        el.assetPreviewImage.src = state.asset.url;
+        el.assetName.textContent = state.asset.name;
+        el.assetSize.textContent = `${state.asset.width} x ${state.asset.height}px`;
+      }
+      el.generateAllButton.disabled = !hasAsset || state.generatingAll;
+      el.generateAllButton.textContent = state.generatingAll
+        ? "正在生成模块图"
+        : state.sections.length
+          ? state.config.generationMode === "chatgpt" ? "一键真实生成全部" : "一键本地预览全部"
+          : "生成详情页方案";
+      el.demoButton.disabled = state.generatingAll;
+      el.clearButton.disabled = !hasAsset;
+      el.replanButton.disabled = !hasAsset;
+      el.exportButton.disabled = generatedCount() === 0;
+      el.addSectionButton.disabled = !state.analysis;
+      el.openChatgptButton.disabled = state.config.generationMode !== "chatgpt";
+
+      renderAnalysis();
+      renderSections();
+      renderEditor();
+    }
+
+    function renderAnalysis() {
+      const hasAnalysis = Boolean(state.analysis);
+      el.analysisState.textContent = hasAnalysis ? "已生成" : "等待上传";
+      el.analysisEmpty.hidden = hasAnalysis;
+      el.analysisGrid.hidden = !hasAnalysis;
+      if (!state.analysis) return;
+      el.productNameInput.value = state.analysis.productName;
+      el.categoryInput.value = state.analysis.category;
+      el.sellingPointsInput.value = state.analysis.coreSellingPoints.join("\n");
+      el.scenariosInput.value = state.analysis.usageScenarios.join("\n");
+    }
+
+    function renderSections() {
+      const heroes = heroSections();
+      const details = detailSections();
+      const total = state.sections.length;
+      el.moduleCount.textContent = total ? `${total} 个模块 · ${generatedCount()}/${total} 已生成` : "0 个模块";
+      el.sectionSummary.textContent = `${heroes.length} 头图 · ${details.length} 详情图`;
+      el.treeEmpty.hidden = state.sections.length > 0;
+      el.sectionList.innerHTML = "";
+      state.sections.forEach((section, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `section-item${section.id === state.selectedId ? " active" : ""}`;
+        button.innerHTML = `
+          <span class="section-index">#${index + 1}</span>
+          <div><strong>${escapeHtml(section.title)}</strong><small>${escapeHtml(sectionLabels[section.type] || section.type)}</small></div>
+          <span class="status ${section.status}">${escapeHtml(section.stage || statusLabel(section.status))}</span>
+        `;
+        button.addEventListener("click", () => {
+          state.selectedId = section.id;
+          render();
+        });
+        el.sectionList.appendChild(button);
+      });
+    }
+
+    function renderEditor() {
+      const section = selectedSection();
+      el.editorEmpty.hidden = Boolean(section);
+      el.editorContent.hidden = !section;
+      if (!section) return;
+      if (section.imageUrl) {
+        el.currentResult.innerHTML = `<img src="${section.imageUrl}" alt="${escapeHtml(section.title)}">`;
+      } else if (section.status === "generating") {
+        el.currentResult.innerHTML = `<div class="empty-note">${escapeHtml(section.stage || "正在生成图片")}</div>`;
+      } else if (section.status === "error") {
+        el.currentResult.innerHTML = `<div class="empty-note">生成失败：${escapeHtml(section.error || "未知错误")}</div>`;
+      } else {
+        el.currentResult.innerHTML = `<div class="empty-note">当前模块尚未生成图片</div>`;
+      }
+      el.sectionTypeInput.value = section.type;
+      el.sectionTitleInput.value = section.title;
+      el.sectionGoalInput.value = section.goal;
+      el.sectionCopyInput.value = section.copy;
+      el.sectionPromptInput.value = section.visualPrompt;
+      el.generateSelectedButton.textContent = section.status === "generating"
+        ? "正在生成"
+        : section.imageUrl
+          ? state.config.generationMode === "chatgpt" ? "重新真实生成" : "重新本地预览"
+          : state.config.generationMode === "chatgpt" ? "真实生成当前图" : "本地预览当前图";
+      el.generateSelectedButton.disabled = section.status === "generating" || state.generatingAll;
+      el.downloadSelectedButton.disabled = !section.imageUrl;
+      el.versionCount.textContent = `${section.versionCount} 个版本`;
+    }
+
+    function statusLabel(status) {
+      if (status === "done") return "已完成";
+      if (status === "generating") return "生成中";
+      if (status === "error") return "失败";
+      return "未开始";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function addCustomSection() {
+      if (!state.analysis) return;
+      const section = {
+        id: createId("custom"),
+        type: "summary",
+        title: "新增详情模块",
+        goal: "补充额外卖点或说明信息。",
+        copy: "这里填写模块文案。",
+        visualPrompt: "Primary Prompt: 生成一张电商详情页模块图，主体清晰，图内直接排版标题、卖点和 CTA。\nEnglish Prompt: Create a polished ecommerce detail section with product, headline, selling points, and CTA.",
+        status: "idle",
+        imageUrl: "",
+        versionCount: 0
+      };
+      state.sections.push(section);
+      state.selectedId = section.id;
+      render();
+    }
+
+    function downloadSection(section) {
+      if (!section?.imageUrl) return;
+      const link = document.createElement("a");
+      link.href = section.imageUrl;
+      link.download = `${state.projectName}-${section.title}.png`.replace(/[\\/:*?"<>|]/g, "-");
+      link.click();
+    }
+
+    function downloadAll() {
+      state.sections.filter((section) => section.imageUrl).forEach(downloadSection);
+    }
+
+    function clearWorkspace() {
+      releaseAssetUrl();
+      state.asset = null;
+      state.projectName = "未命名商品项目";
+      state.analysis = null;
+      state.sections = [];
+      state.selectedId = "";
+      el.fileInput.value = "";
+      render();
+    }
+
+    el.fileInput.addEventListener("change", (event) => handleFile(event.target.files?.[0]));
+    el.generateAllButton.addEventListener("click", generateAllSections);
+    el.demoButton.addEventListener("click", useDemoProduct);
+    el.clearButton.addEventListener("click", clearWorkspace);
+    el.replanButton.addEventListener("click", buildDraftProject);
+    el.exportButton.addEventListener("click", downloadAll);
+    el.addSectionButton.addEventListener("click", addCustomSection);
+    el.openChatgptButton.addEventListener("click", openChatgpt);
+    el.generateSelectedButton.addEventListener("click", generateSelectedSection);
+    el.downloadSelectedButton.addEventListener("click", () => downloadSection(selectedSection()));
+    [el.productNameInput, el.categoryInput, el.sellingPointsInput, el.scenariosInput].forEach((input) => {
+      input.addEventListener("input", syncAnalysisFromInputs);
+    });
+    [el.sectionTypeInput, el.sectionTitleInput, el.sectionGoalInput, el.sectionCopyInput, el.sectionPromptInput].forEach((input) => {
+      input.addEventListener("input", syncSectionFromInputs);
+    });
+    el.heroCountSelect.addEventListener("change", () => {
+      state.config.heroCount = Number(el.heroCountSelect.value);
+      if (state.asset) buildDraftProject();
+    });
+    el.detailCountSelect.addEventListener("change", () => {
+      state.config.detailCount = Number(el.detailCountSelect.value);
+      if (state.asset) buildDraftProject();
+    });
+    el.ratioSelect.addEventListener("change", () => {
+      state.config.ratio = el.ratioSelect.value;
+      if (state.sections.length) showToast("比例已更新，重新生成后生效");
+    });
+    el.generationModeSelect.addEventListener("change", () => {
+      state.config.generationMode = el.generationModeSelect.value;
+      render();
+      refreshChatgptStatus();
+    });
+    el.browserModeSelect.addEventListener("change", () => {
+      state.config.browserMode = el.browserModeSelect.value;
+      refreshChatgptStatus();
+    });
+    el.languageSelect.addEventListener("change", () => {
+      state.config.language = el.languageSelect.value;
+    });
+
+    window.addEventListener("beforeunload", () => {
+      releaseAssetUrl();
+    });
+
+    render();
+    refreshChatgptStatus();
+  </script>
+</body>
+</html>
