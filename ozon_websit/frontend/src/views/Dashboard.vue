@@ -422,8 +422,7 @@ const loadDashboard = async () => {
 }
 
 const handleRefresh = async () => {
-  await loadStores(true)
-  await loadDashboard()
+  await Promise.all([loadStores(), loadDashboard()])
 }
 
 const handleResize = () => {
@@ -434,9 +433,8 @@ const handleResize = () => {
 }
 
 onMounted(async () => {
-  await loadStores(true)
-  await loadDashboard()
   window.addEventListener('resize', handleResize)
+  await handleRefresh()
 })
 
 onUnmounted(() => {

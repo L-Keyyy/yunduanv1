@@ -47,7 +47,6 @@ from ozon_client import (
     archive_products,
     fetch_fbs_postings,
     get_products_info_list,
-    get_product_total_count,
     get_upload_task_info,
     list_warehouses,
     list_products_page,
@@ -9164,27 +9163,7 @@ async def get_dashboard_summary(
     today_orders = today_orders_query.count()
     pending_fbs_orders = pending_fbs_orders_query.count()
     stores = stores_query.all()
-    live_product_total = 0
-    if stores:
-        product_count_results = await asyncio.gather(
-            *[
-                get_product_total_count(store.client_id, store.api_key)
-                for store in stores
-            ]
-        )
-        for store, result in zip(stores, product_count_results):
-            if result.get("ok"):
-                payload = result.get("data", {})
-                product_result = payload.get("result", payload)
-                live_product_total += int(product_result.get("total", 0) or 0)
-            else:
-                live_product_total += (
-                    db.query(models.Product)
-                    .filter(models.Product.store_id == store.id)
-                    .count()
-                )
-
-    total_products = live_product_total
+    total_products = products_query.count()
     low_stock_alerts = products_query.filter(
         models.Product.archived.is_(False),
         models.Product.stock <= 10,

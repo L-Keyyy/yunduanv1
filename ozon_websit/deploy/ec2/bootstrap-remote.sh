@@ -130,13 +130,13 @@ sudo rm -rf /usr/share/nginx/html/*
 sudo cp -r "${FRONTEND_ROOT}/." /usr/share/nginx/html/
 
 sudo systemctl daemon-reload
-sudo systemctl enable nginx ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat ozon-chrome >/dev/null
+sudo systemctl enable nginx ozon-backend ozon-worker ozon-upload-worker ozon-browser-worker ozon-beat >/dev/null
+sudo systemctl disable --now ozon-chrome >/dev/null 2>&1 || true
 sudo systemctl restart ozon-backend
 sudo systemctl restart ozon-worker
 sudo systemctl restart ozon-upload-worker
 sudo systemctl restart ozon-browser-worker
 sudo systemctl restart ozon-beat
-sudo systemctl restart ozon-chrome
 sudo systemctl restart nginx
 
 echo "bootstrap complete"

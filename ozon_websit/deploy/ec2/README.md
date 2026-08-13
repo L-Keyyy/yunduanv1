@@ -61,11 +61,12 @@ Optional flags:
 ### Runtime checks
 
 ```bash
-sudo systemctl status ozon-backend ozon-worker ozon-beat ozon-chrome nginx
+sudo systemctl status ozon-backend ozon-worker ozon-beat nginx
 curl -sS http://127.0.0.1:8000/healthz
 curl -sS http://127.0.0.1:8000/api/v1/health
-curl -sS http://127.0.0.1:9222/json/version
 ```
+
+The server-side Chrome service stays disabled by default; browser-dependent work uses the local Chrome instance instead.
 
 ### One-time SQLite migration
 
