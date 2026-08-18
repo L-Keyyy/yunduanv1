@@ -9,7 +9,7 @@ export default function ListingCollectionPage() {
       <PageHeader
         eyebrow="商品工作流"
         title="采集阶段"
-        description="采集链接时同步完成 AI 类目匹配；确认 SKU 和待翻译图片后启动三线加工。"
+        description="采集阶段只保存商品信息；先选择主图、待翻译图片和 SKU，点击开始加工后再按所选 Skill 模式发送给 AI。"
       />
       <ListingStageWorkspace stage="COLLECTED" />
     </div>

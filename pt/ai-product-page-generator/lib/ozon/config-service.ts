@@ -7,6 +7,7 @@ export type OzonConfigSource = "database" | "env" | "missing";
 export type OzonConnectionState = {
   id: string | null;
   name: string;
+  active: boolean;
   baseUrl: string;
   clientId: string;
   source: OzonConfigSource;
@@ -33,6 +34,8 @@ export type SaveOzonApiConfigInput = {
   apiKey?: string | null;
 };
 
+const OZON_DRAFT_API_KEY = "__OZON_STORE_DRAFT__";
+
 function maskSecret(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -53,6 +56,7 @@ function envConnectionState(): OzonConnectionState {
   return {
     id: null,
     name: ready ? ".env Ozon Seller API" : "未配置",
+    active: ready,
     baseUrl,
     clientId,
     source: ready ? "env" : "missing",
@@ -65,20 +69,23 @@ function envConnectionState(): OzonConnectionState {
   };
 }
 
-export async function getOzonConnectionState(): Promise<OzonConnectionState> {
-  const saved = await prisma.ozonApiConfig.findFirst({
-    where: { isActive: true },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  if (!saved) {
-    return envConnectionState();
-  }
-
+function savedConnectionState(saved: {
+  id: string;
+  name: string;
+  baseUrl: string;
+  clientId: string;
+  apiKeyEncrypted: string;
+  isActive: boolean;
+  updatedAt: Date;
+}): OzonConnectionState {
   let apiKeyConfigured = true;
   let maskedApiKey = "已保存";
   try {
-    maskedApiKey = maskSecret(decryptSecret(saved.apiKeyEncrypted));
+    const decrypted = decryptSecret(saved.apiKeyEncrypted);
+    apiKeyConfigured = Boolean(
+      decrypted.trim() && decrypted !== OZON_DRAFT_API_KEY,
+    );
+    maskedApiKey = apiKeyConfigured ? maskSecret(decrypted) : "";
   } catch {
     apiKeyConfigured = false;
     maskedApiKey = "";
@@ -87,6 +94,7 @@ export async function getOzonConnectionState(): Promise<OzonConnectionState> {
   return {
     id: saved.id,
     name: saved.name,
+    active: saved.isActive,
     baseUrl: normalizeBaseUrl(saved.baseUrl),
     clientId: saved.clientId,
     source: "database",
@@ -99,17 +107,38 @@ export async function getOzonConnectionState(): Promise<OzonConnectionState> {
   };
 }
 
-export async function getOzonCredentials(): Promise<OzonCredentials | null> {
-  const saved = await prisma.ozonApiConfig.findFirst({
-    where: { isActive: true },
-    orderBy: { updatedAt: "desc" },
+export async function listOzonConnectionStates(): Promise<OzonConnectionState[]> {
+  const saved = await prisma.ozonApiConfig.findMany({
+    orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
   });
+  if (saved.length) return saved.map(savedConnectionState);
+  const fallback = envConnectionState();
+  return fallback.ready ? [fallback] : [];
+}
+
+export async function getOzonConnectionState(): Promise<OzonConnectionState> {
+  const stores = await listOzonConnectionStates();
+  return stores.find((store) => store.active) ?? stores[0] ?? envConnectionState();
+}
+
+export async function getOzonCredentials(
+  configId?: string | null,
+): Promise<OzonCredentials | null> {
+  const saved = configId
+    ? await prisma.ozonApiConfig.findUnique({ where: { id: configId } })
+    : await prisma.ozonApiConfig.findFirst({
+        where: { isActive: true },
+        orderBy: { updatedAt: "desc" },
+      });
 
   if (saved) {
+    const apiKey = decryptSecret(saved.apiKeyEncrypted);
+    const clientId = saved.clientId.trim();
+    if (!clientId || !apiKey || apiKey === OZON_DRAFT_API_KEY) return null;
     return {
       baseUrl: normalizeBaseUrl(saved.baseUrl),
-      clientId: saved.clientId.trim(),
-      apiKey: decryptSecret(saved.apiKeyEncrypted),
+      clientId,
+      apiKey,
       source: "database",
     };
   }
@@ -140,14 +169,14 @@ export async function saveOzonApiConfig(input: SaveOzonApiConfigInput) {
     if (!existing) {
       throw new Error("未找到可复用的 Ozon API 配置，请重新输入 Api-Key。");
     }
+    const existingApiKey = decryptSecret(existing.apiKeyEncrypted);
+    if (existingApiKey === OZON_DRAFT_API_KEY) {
+      throw new Error("请填写 Ozon Api-Key。");
+    }
     apiKeyEncrypted = existing.apiKeyEncrypted;
   } else {
     throw new Error("请填写 Ozon Api-Key。");
   }
-
-  await prisma.ozonApiConfig.updateMany({
-    data: { isActive: false },
-  });
 
   const saved = input.id
     ? await prisma.ozonApiConfig.update({
@@ -157,7 +186,6 @@ export async function saveOzonApiConfig(input: SaveOzonApiConfigInput) {
           baseUrl,
           clientId,
           apiKeyEncrypted,
-          isActive: true,
         },
       })
     : await prisma.ozonApiConfig.create({
@@ -166,9 +194,52 @@ export async function saveOzonApiConfig(input: SaveOzonApiConfigInput) {
           baseUrl,
           clientId,
           apiKeyEncrypted,
-          isActive: true,
+          isActive:
+            (await prisma.ozonApiConfig.count({
+              where: { isActive: true },
+            })) === 0,
         },
       });
 
   return saved.id;
+}
+
+export async function createOzonApiConfigDraft(name?: string | null) {
+  const count = await prisma.ozonApiConfig.count();
+  return prisma.ozonApiConfig.create({
+    data: {
+      name: name?.trim() || `Ozon 店铺 ${count + 1}`,
+      baseUrl: "https://api-seller.ozon.ru",
+      clientId: "",
+      apiKeyEncrypted: encryptSecret(OZON_DRAFT_API_KEY),
+      isActive: false,
+    },
+  });
+}
+
+export async function activateOzonApiConfig(id: string) {
+  const existing = await prisma.ozonApiConfig.findUnique({ where: { id } });
+  if (!existing) throw new Error("店铺配置不存在。");
+  await prisma.$transaction([
+    prisma.ozonApiConfig.updateMany({ data: { isActive: false } }),
+    prisma.ozonApiConfig.update({ where: { id }, data: { isActive: true } }),
+  ]);
+  return id;
+}
+
+export async function deleteOzonApiConfig(id: string) {
+  const existing = await prisma.ozonApiConfig.findUnique({ where: { id } });
+  if (!existing) throw new Error("店铺配置不存在。");
+  await prisma.ozonApiConfig.delete({ where: { id } });
+  if (existing.isActive) {
+    const next = await prisma.ozonApiConfig.findFirst({
+      orderBy: { updatedAt: "desc" },
+    });
+    if (next) {
+      await prisma.ozonApiConfig.update({
+        where: { id: next.id },
+        data: { isActive: true },
+      });
+    }
+  }
 }

@@ -5,6 +5,14 @@ import { nanoid } from "nanoid";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
+import { ensureDoubaoWebService } from "@/lib/browser-ai/client";
+import {
+  persistWorkflowTranslationFailure,
+  persistWorkflowTranslationResult,
+  type ProcessingWorkflowContext,
+} from "@/lib/listing-workflow/processing-state";
+import { runProcessingFifo } from "@/lib/listing-workflow/processing-fifo";
+import { publishWorkflowImage } from "@/lib/listing-workflow/public-image-host";
 import { env } from "@/lib/utils/env";
 import { extFromMime, relativeStorageUrl, sanitizeFileName } from "@/lib/utils/files";
 import { handleRouteError, ok } from "@/lib/utils/route";
@@ -16,6 +24,9 @@ const requestSchema = z.object({
     url: z.string().min(1),
   })).min(1).max(20),
   targetLanguage: z.string().trim().min(2).max(12).default("ru"),
+  workflowItemId: z.string().trim().min(1).max(200).optional().nullable(),
+  workflowRunId: z.string().trim().min(1).max(300).optional().nullable(),
+  workflowTranslationTotal: z.number().int().min(1).max(30).optional(),
 });
 
 function storageRoot() {
@@ -67,6 +78,7 @@ async function saveTranslatedCrop(input: {
   const absolutePath = path.join(storageRoot(), relativePath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, parsed.bytes);
+  const publicImage = await publishWorkflowImage({ absolutePath, fileName });
   await fs.writeFile(
     `${absolutePath}.json`,
     JSON.stringify({
@@ -75,6 +87,7 @@ async function saveTranslatedCrop(input: {
       engine: "web-image-translation-atlas",
       targetLanguage: input.targetLanguage,
       atlasIndex: input.atlasIndex,
+      publicImageUrl: publicImage.publicUrl,
       createdAt: new Date().toISOString(),
     }, null, 2),
     "utf8",
@@ -84,15 +97,30 @@ async function saveTranslatedCrop(input: {
     name: fileName,
     fileName,
     filePath: relativePath.split(path.sep).join("/"),
-    imageUrl: relativeStorageUrl(relativePath),
+    imageUrl: publicImage.publicUrl ?? relativeStorageUrl(relativePath),
     mimeType: parsed.mimeType,
     atlasIndex: input.atlasIndex,
+    warnings: publicImage.warning ? [publicImage.warning] : [],
   };
 }
 
 export async function POST(request: NextRequest) {
+  let input: z.infer<typeof requestSchema>;
   try {
-    const input = requestSchema.parse(await request.json());
+    input = requestSchema.parse(await request.json());
+  } catch (error) {
+    return handleRouteError(error);
+  }
+  const workflowContext: ProcessingWorkflowContext | null =
+    input.workflowItemId && input.workflowRunId
+      ? { itemId: input.workflowItemId, runId: input.workflowRunId }
+      : null;
+  const workflowTranslationTotal = workflowContext
+    ? input.workflowTranslationTotal ?? input.images.length
+    : 0;
+
+  return runProcessingFifo("translation", workflowContext, async () => {
+    try {
     const sources = await Promise.all(
       input.images.map(async (image) => ({
         ...image,
@@ -115,6 +143,7 @@ export async function POST(request: NextRequest) {
     const timeout = setTimeout(() => controller.abort(), 5 * 60_000);
     let response: Response;
     try {
+      await ensureDoubaoWebService();
       response = await fetch("http://127.0.0.1:8010/translate-atlas", {
         method: "POST",
         body: formData,
@@ -155,15 +184,30 @@ export async function POST(request: NextRequest) {
       });
     }));
 
-    return ok({
+    const result = {
       engine: payload.engine || "web-image-translation-atlas",
       atlasCount: Number(payload.atlasCount || 1),
       imageCount: images.length,
       images,
       sourceText: payload.sourceText || "",
       translatedText: payload.translatedText || "",
-    });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    };
+    await persistWorkflowTranslationResult(
+      workflowContext,
+      workflowTranslationTotal,
+      images,
+    );
+    return ok(result);
+    } catch (error) {
+      if (workflowContext) {
+        const message = error instanceof Error ? error.message : "图集翻译请求异常";
+        await persistWorkflowTranslationFailure(
+          workflowContext,
+          workflowTranslationTotal,
+          message,
+        ).catch(() => undefined);
+      }
+      return handleRouteError(error);
+    }
+  }).catch(handleRouteError);
 }

@@ -86,6 +86,7 @@ export type ListingWorkflowItem = {
   categoryLabel: string | null;
   categoryPath: string[] | null;
   scrapedData: Record<string, unknown>;
+  workflowData: Record<string, unknown> | null;
   features: ListingWorkflowFeature[] | null;
   aiResponse: Record<string, unknown> | null;
   notes: string[] | null;
@@ -97,6 +98,6 @@ export function listingItemStatusLabel(status: ListingWorkflowStatus) {
   if (status === "MATCHED") return "AI 已匹配";
   if (status === "AI_RUNNING") return "AI 匹配中";
   if (status === "AI_FAILED") return "匹配失败";
-  if (status === "PENDING_AI") return "类目已匹配，等待特征加工";
+  if (status === "PENDING_AI") return "待选择图片与 SKU";
   return "采集完成";
 }

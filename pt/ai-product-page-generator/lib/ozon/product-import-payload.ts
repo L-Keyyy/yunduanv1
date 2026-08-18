@@ -1,5 +1,6 @@
 import type { OzonMappedAttributeValue } from "@/lib/ozon/ai-response-mapper";
 import { findOzonColorValue, isOzonColorAttributeId } from "@/lib/ozon/color-match";
+import { isIgnoredOzonAttributeId } from "@/lib/ozon/ignored-attributes";
 
 export type OzonPayloadFeatureInput = {
   attributeId: string;
@@ -36,6 +37,12 @@ export type OzonPayloadBuildInput = {
       images?: string[];
     } | null;
     features?: OzonPayloadFeatureInput[];
+    depth?: number | string;
+    width?: number | string;
+    height?: number | string;
+    weight?: number | string;
+    dimensionUnit?: "mm" | "cm" | "in";
+    weightUnit?: "g" | "kg" | "lb";
   }>;
 };
 
@@ -67,9 +74,48 @@ function priceText(value: string) {
     : "";
 }
 
+const MINIMUM_LISTING_PRICE_CNY = 15;
+
+function numericPrice(value: string) {
+  const normalized = priceText(value);
+  return normalized ? Number(normalized) : null;
+}
+
+function minimumDiscountGap(price: number) {
+  if (price < 400) return 20.01;
+  if (price <= 10_000) return price * 0.0501;
+  return 500.01;
+}
+
+function containsHanText(value: unknown) {
+  return /[\u3400-\u9fff]/u.test(String(value ?? ""));
+}
+
+function uploadedAttributeValues(item: Record<string, unknown>) {
+  const plain = Array.isArray(item.attributes) ? item.attributes : [];
+  const complex = Array.isArray(item.complex_attributes)
+    ? item.complex_attributes.flatMap((group) => {
+        if (!group || typeof group !== "object") return [];
+        const attributes = (group as Record<string, unknown>).attributes;
+        return Array.isArray(attributes) ? attributes : [];
+      })
+    : [];
+  return [...plain, ...complex].flatMap((attribute) => {
+    if (!attribute || typeof attribute !== "object") return [];
+    const record = attribute as Record<string, unknown>;
+    const values = Array.isArray(record.values) ? record.values : [];
+    return values.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const text = String((value as Record<string, unknown>).value ?? "").trim();
+      return text ? [{ attributeId: record.id, text }] : [];
+    });
+  });
+}
+
 function isOzonUploadImageCandidate(value: string) {
-  return !/(?:\.search|\.summ|\.310x310|\.220x220)\.(?:avif|gif|jpe?g|png|webp)(?:$|[?#])/i.test(
-    value,
+  return (
+    !/(?:\.search|\.summ|\.310x310|\.220x220)\.(?:avif|gif|jpe?g|png|webp)(?:$|[?#])/i.test(value) &&
+    !/(?:\.free\.pinggy\.net|trycloudflare\.com|localhost|127\.0\.0\.1)/i.test(value)
   );
 }
 
@@ -80,11 +126,12 @@ function cleanAttributeValues(
   const normalized = (values ?? []).flatMap((value) => {
     const dictionaryValueId = positiveInteger(value.dictionary_value_id);
     const text = String(value.value ?? "").trim();
-    if (!dictionaryValueId && !text) return [];
+    const uploadText = containsHanText(text) ? "" : text;
+    if (!dictionaryValueId && !uploadText) return [];
     return [
       {
         ...(dictionaryValueId ? { dictionary_value_id: dictionaryValueId } : {}),
-        ...(text ? { value: text } : {}),
+        ...(uploadText ? { value: uploadText } : {}),
       },
     ];
   });
@@ -157,7 +204,7 @@ function canonicalAttributeText(
   return (
     feature?.ozonAttributeValues
       ?.map((value) => String(value.value ?? "").trim())
-      .find(Boolean) ?? ""
+      .find((value) => value && !containsHanText(value)) ?? ""
   );
 }
 
@@ -193,12 +240,39 @@ export function buildOzonProductImportPayload(
   if (typeId) item.type_id = typeId;
   else errors.push("缺少有效的 type_id。");
 
-  const price = priceText(base.get("price") ?? "");
+  const parsedPrice = numericPrice(base.get("price") ?? "");
+  const effectivePrice = parsedPrice === null
+    ? null
+    : Math.max(MINIMUM_LISTING_PRICE_CNY, parsedPrice);
+  const price = effectivePrice === null
+    ? ""
+    : effectivePrice.toFixed(2).replace(/\.00$/, "");
   if (price) item.price = price;
   else errors.push("缺少有效的商品售价 price。");
+  if (parsedPrice !== null && parsedPrice < MINIMUM_LISTING_PRICE_CNY) {
+    warnings.push(
+      `商品售价 ${parsedPrice.toFixed(2)} 元低于店铺下限，已调整为 ${MINIMUM_LISTING_PRICE_CNY.toFixed(2)} 元。`,
+    );
+  }
 
-  const oldPrice = priceText(base.get("old_price") ?? "");
-  if (oldPrice) item.old_price = oldPrice;
+  const parsedOldPrice = numericPrice(base.get("old_price") ?? "");
+  if (effectivePrice !== null && parsedOldPrice !== null) {
+    const minimumOldPrice = effectivePrice + minimumDiscountGap(effectivePrice);
+    const effectiveOldPrice = Math.max(parsedOldPrice, minimumOldPrice);
+    item.old_price = effectiveOldPrice.toFixed(2).replace(/\.00$/, "");
+    if (parsedOldPrice < minimumOldPrice) {
+      warnings.push("折扣前价格的价差不足，已按 Ozon 折扣规则自动调整。");
+    }
+  }
+
+  if (effectivePrice !== null) {
+    const parsedMinPrice = numericPrice(base.get("min_price") ?? "");
+    const effectiveMinPrice = Math.min(
+      effectivePrice,
+      Math.max(MINIMUM_LISTING_PRICE_CNY, parsedMinPrice ?? 0),
+    );
+    item.min_price = effectiveMinPrice.toFixed(2).replace(/\.00$/, "");
+  }
 
   const offerId = (base.get("offer_id") ?? "").slice(0, 50);
   if (offerId) item.offer_id = offerId;
@@ -222,16 +296,13 @@ export function buildOzonProductImportPayload(
 
   const dimensionUnit = (base.get("dimension_unit") ?? "").toLowerCase();
   if (["mm", "cm", "in"].includes(dimensionUnit)) item.dimension_unit = dimensionUnit;
-  else warnings.push("尺寸单位必须是 mm、cm 或 in。");
 
   const weightUnit = (base.get("weight_unit") ?? "").toLowerCase();
   if (["g", "kg", "lb"].includes(weightUnit)) item.weight_unit = weightUnit;
-  else warnings.push("重量单位必须是 g、kg 或 lb。");
 
   for (const field of ["depth", "width", "height", "weight"] as const) {
     const value = positiveInteger(base.get(field));
     if (value) item[field] = value;
-    else warnings.push(`${field} 必须是大于 0 的整数。`);
   }
 
   const requestedPrimaryImage = String(
@@ -268,6 +339,7 @@ export function buildOzonProductImportPayload(
         );
         continue;
       }
+      if (isIgnoredOzonAttributeId(attributeId)) continue;
       const values =
         cleanAttributeValues(feature.ozonAttributeValues, feature.value).length
           ? cleanAttributeValues(feature.ozonAttributeValues, feature.value)
@@ -334,6 +406,17 @@ export function buildOzonProductImportPayload(
         if (variantPrimaryImage) variantItem.primary_image = variantPrimaryImage;
         if (variantImages.length) variantItem.images = variantImages.slice(0, 29);
 
+        for (const field of ["depth", "width", "height", "weight"] as const) {
+          const value = positiveInteger(variant[field]);
+          if (value) variantItem[field] = value;
+        }
+        if (variant.dimensionUnit) {
+          variantItem.dimension_unit = variant.dimensionUnit;
+        }
+        if (variant.weightUnit) {
+          variantItem.weight_unit = variant.weightUnit;
+        }
+
         if (variant.features?.length) {
           const variantAttributes = serializeAttributes(
             variant.features,
@@ -358,6 +441,31 @@ export function buildOzonProductImportPayload(
         return variantItem;
       })
     : [item];
+
+  for (const [index, uploadItem] of items.entries()) {
+    const itemLabel = String(uploadItem.offer_id || `第 ${index + 1} 个商品`);
+    if (!['mm', 'cm', 'in'].includes(String(uploadItem.dimension_unit ?? '').toLowerCase())) {
+      warnings.push(`SKU ${itemLabel} 的尺寸单位必须是 mm、cm 或 in。`);
+    }
+    if (!['g', 'kg', 'lb'].includes(String(uploadItem.weight_unit ?? '').toLowerCase())) {
+      warnings.push(`SKU ${itemLabel} 的重量单位必须是 g、kg 或 lb。`);
+    }
+    for (const field of ["depth", "width", "height", "weight"] as const) {
+      if (!positiveInteger(uploadItem[field])) {
+        warnings.push(`SKU ${itemLabel} 的 ${field} 必须是大于 0 的整数。`);
+      }
+    }
+    if (containsHanText(uploadItem.name)) {
+      errors.push(`SKU ${itemLabel} 的 Ozon 上传名称仍包含中文。`);
+    }
+    for (const attribute of uploadedAttributeValues(uploadItem)) {
+      if (containsHanText(attribute.text)) {
+        errors.push(
+          `SKU ${itemLabel} 的属性 ${String(attribute.attributeId)} 上传值仍包含中文。`,
+        );
+      }
+    }
+  }
 
   return {
     payload: { items },

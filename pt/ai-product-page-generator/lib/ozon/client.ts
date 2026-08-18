@@ -17,8 +17,8 @@ export async function getOzonConnectionState(): Promise<OzonConnectionState> {
   return readOzonConnectionState();
 }
 
-async function requireOzonCredentials() {
-  const credentials = await getOzonCredentials();
+async function requireOzonCredentials(configId?: string | null) {
+  const credentials = await getOzonCredentials(configId);
   if (!credentials) {
     throw new OzonConfigError();
   }
@@ -29,16 +29,26 @@ function readOzonError(payload: unknown) {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   const message = record.message ?? record.error ?? record.details;
-  if (typeof message === "string") return message;
-  return null;
+  if (typeof message === "string") {
+    const details = record.details;
+    if (details && typeof details !== "string") {
+      return `${message}: ${JSON.stringify(details)}`;
+    }
+    return message;
+  }
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return null;
+  }
 }
 
 export async function ozonSellerRequest<TResponse>(
   endpoint: string,
   body: Record<string, unknown>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; configId?: string | null } = {},
 ) {
-  const credentials = await requireOzonCredentials();
+  const credentials = await requireOzonCredentials(options.configId);
   const response = await fetch(`${credentials.baseUrl}${endpoint}`, {
     method: "POST",
     headers: {

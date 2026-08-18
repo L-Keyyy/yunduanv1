@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
@@ -17,7 +17,15 @@ import {
   auditProductFacts,
   isPreparedProductFacts,
   prepareProductFacts,
+  type PreparedProductFacts,
+  type PreparedProductVariant,
 } from "@/lib/listing-workflow/product-facts";
+import {
+  persistWorkflowFeatureFailure,
+  persistWorkflowFeatureResult,
+  type ProcessingWorkflowContext,
+  type WorkflowFeatureResult,
+} from "@/lib/listing-workflow/processing-state";
 import {
   DEFAULT_FEATURE_FILL_SYSTEM_PROMPT,
   DEFAULT_FEATURE_FILL_TASK_PROMPT,
@@ -25,6 +33,7 @@ import {
 import { ozonListingBaseFields, type OzonAttributeNode } from "@/lib/ozon/feature-tree";
 import { mapOzonAiResponse } from "@/lib/ozon/ai-response-mapper";
 import { findOzonColorValue, isOzonColorAttributeId } from "@/lib/ozon/color-match";
+import { isIgnoredOzonAttribute } from "@/lib/ozon/ignored-attributes";
 import { getOzonFeatureSnapshot, type OzonAttributeSnapshot } from "@/lib/ozon/snapshot";
 import { searchOzonAttributeValues } from "@/lib/ozon/sync-service";
 import { getProviderAdapter } from "@/lib/services/provider-service";
@@ -38,6 +47,9 @@ const featureDraftRequestSchema = z.object({
   model: z.string().min(1).optional().nullable(),
   customPrompt: z.string().trim().max(4000).optional().nullable(),
   systemPrompt: z.string().trim().max(8000).optional().nullable(),
+  precomputedAiText: z.string().trim().min(2).max(2_000_000).optional().nullable(),
+  workflowItemId: z.string().trim().min(1).max(200).optional().nullable(),
+  workflowRunId: z.string().trim().min(1).max(300).optional().nullable(),
 });
 
 const aiFeatureItemSchema = z.object({
@@ -79,9 +91,20 @@ const aiDisplayFeatureItemSchema = z.object({
     ]),
 });
 
+const aiVariantFeatureResponseSchema = z.object({
+  skuId: z
+    .union([z.string(), z.number()])
+    .transform((value) => String(value).trim())
+    .pipe(z.string().min(1)),
+  specLine: z.string().trim().optional().default(""),
+  displayFeatures: z.array(aiDisplayFeatureItemSchema).default([]),
+  uploadFeatures: z.array(aiFeatureItemSchema).default([]),
+});
+
 const aiDualFeatureResponseSchema = z.object({
   displayFeatures: z.array(aiDisplayFeatureItemSchema).default([]),
   uploadFeatures: z.array(aiFeatureItemSchema).default([]),
+  variants: z.array(aiVariantFeatureResponseSchema).default([]),
   notes: z
     .union([z.array(z.string()), z.string()])
     .transform((value) => (Array.isArray(value) ? value : [value]))
@@ -122,17 +145,113 @@ type DraftFeature = {
   aiJsonValue?: string;
 };
 
-const BRAND_DEFAULT_VALUE = "无";
+const BRAND_DEFAULT_VALUE = "没有品牌";
 const COUNTRY_DEFAULT_VALUE = "中国";
+const MANUFACTURER_DEFAULT_VALUE = "China";
+const FACTORY_PACKAGE_DEFAULT_VALUE = "1";
+const SAFE_HAZARD_DEFAULT_LABEL = "不危险";
+const SAFE_HAZARD_DEFAULT_UPLOAD_VALUE = "Не опасен";
+const DEFAULT_SHELF_LIFE_DAYS = "30";
+const DEFAULT_WARRANTY_DAYS = 30;
+const DEFAULT_WARRANTY_LABEL = "30天";
+const DEFAULT_WARRANTY_UPLOAD_VALUE = "1 месяц";
+
+const FEATURE_COVERAGE_GUIDANCE = [
+  "覆盖率要求：在不制造商品事实的前提下，返回所有可以从商品事实、所选 SKU、商品图片或商品类型可靠确定及确定性推导的适用字段，不要只返回必填字段。",
+  "可以生成与商品事实一致的主题标签、配套清单和批次标识；配套清单应写清商品主体和实际件数。",
+  "当输入只有一个所选 SKU，且标题、规格和事实均没有套装或多件装描述时，每商品件数、统一计量单位数量、原厂包装数量、套装工具数量可填写 1。若有明确多件数，以事实为准。",
+  "普通无电池、无液体、无化学品的固体工具或配件，可在危险等级允许值中选择“不危险/Не опасен”；存在任何危险品迹象时省略。",
+  "附带商品图片时，可用清晰可见的颜色、形状和单件数量作为补充依据；图片看不清的内容仍应省略。",
+  "商品不是刷子时，刷宽、刷毛长度、刷毛材质、刷型和刷束形状均不适用，必须省略；通用商品材质不得写入刷毛材质。",
+].join("\n");
+
+const SKU_VARIANT_GUIDANCE = [
+  "本段多 SKU 规则优先于前文任何根字段顺序要求：根 JSON 的第一个键必须是 variants，先完整返回所有 SKU，再返回公共 uploadFeatures、displayFeatures 和 notes。",
+  "多 SKU 返回要求：productFacts.variants 中的每个 skuId 都必须在根 JSON 的 variants 数组中原样返回一次，数量、集合和顺序与输入一致。",
+  "根级 uploadFeatures/displayFeatures 只放所有 SKU 共用的字段；颜色、尺寸、规格、容量、包装数量、每件数量等差异字段放入对应 SKU 的 uploadFeatures/displayFeatures。",
+  "每个 SKU 必须返回 specLine，格式为“字段=值｜字段=值”，只能使用全角分隔符｜；优先完整保留 sku title、specText、specs 和 package 中的明确事实。",
+  "每个 SKU 的 displayFeatures 与 uploadFeatures 必须使用相同 attributeId；只返回 attributeTemplate 中存在的 attributeId，缺少依据的值省略。",
+  "不得合并相似 SKU，不得依据数组位置猜测 skuId，也不得把某个 SKU 的尺寸、包装或价格复制给其他 SKU。",
+].join("\n");
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asRecordArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const record = asRecord(entry);
+        return Object.keys(record).length ? [record] : [];
+      })
+    : [];
 }
 
 function textValue(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function featureImageCandidates(data: Record<string, unknown>) {
+  const detailCapture = asRecord(data.detailCapture);
+  const selectedVariant = asRecord(data.selectedVariant);
+  const workflowImages = asRecord(data.workflowImages);
+  const candidates = [
+    textValue(detailCapture.imageUrl),
+    textValue(selectedVariant.imageUrl),
+    ...asRecordArray(workflowImages.items)
+      .filter((image) => image.source === "crawler")
+      .map((image) => textValue(image.url)),
+    ...(Array.isArray(data.images)
+      ? data.images.map((image) => textValue(image))
+      : []),
+  ];
+  return [...new Set(candidates.filter(Boolean))].slice(0, 2);
+}
+
+async function imageToDataUrl(url: string, requestOrigin: string) {
+  if (/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(url)) return url;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(new URL(url, requestOrigin), {
+      headers: {
+        Accept: "image/png,image/jpeg,image/webp,image/gif,image/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 Chrome/149 Safari/537.36",
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`商品图片下载失败：${response.status}`);
+    const mimeType =
+      response.headers.get("content-type")?.split(";")[0]?.trim() ||
+      "image/jpeg";
+    if (!/^image\/(?:png|jpeg|gif|webp)$/i.test(mimeType)) {
+      throw new Error("商品图片格式不适合视觉匹配");
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 10 * 1024 * 1024) {
+      throw new Error("商品图片大小超出视觉匹配范围");
+    }
+    return `data:${mimeType};base64,${bytes.toString("base64")}`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function featureVisionImages(
+  data: Record<string, unknown>,
+  requestOrigin: string,
+) {
+  const images: string[] = [];
+  for (const url of featureImageCandidates(data)) {
+    try {
+      images.push(await imageToDataUrl(url, requestOrigin));
+    } catch {
+      // 单张图片不可用时继续使用其余图片和结构化商品事实。
+    }
+  }
+  return images;
 }
 
 function compactText(value: string) {
@@ -411,7 +530,12 @@ function readBaseValue(field: OzonAttributeNode, facts: SourceFact[], category: 
   }
 
   if (field.id === "brand") {
-    return { value: BRAND_DEFAULT_VALUE, confidence: 0.9, source: "业务默认", reason: "按当前上架规则，品牌字段统一填写“无”。" };
+    return {
+      value: BRAND_DEFAULT_VALUE,
+      confidence: 0.9,
+      source: "业务默认",
+      reason: "按当前上架规则，品牌字段自动填写“没有品牌”。",
+    };
   }
 
   if (field.id === "price" || field.id === "old_price" || field.id === "min_price") {
@@ -550,8 +674,130 @@ function isBrandFeature(feature: Pick<DraftFeature, "attributeId" | "label" | "o
   return [feature.attributeId, feature.label, feature.ozonCode ?? ""].some(isBrandText);
 }
 
+function isModelNameFeature(
+  feature: Pick<
+    DraftFeature,
+    "attributeId" | "label" | "displayLabel" | "ozonCode"
+  >,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("9048") ||
+    text.includes("названиемодели") ||
+    text.includes("modelname") ||
+    text.includes("型号名称")
+  );
+}
+
 function isCountryFeature(feature: Pick<DraftFeature, "attributeId" | "label" | "ozonCode">) {
   return [feature.attributeId, feature.label, feature.ozonCode ?? ""].some(isCountryText);
+}
+
+function featureSearchText(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  return semanticText(
+    `${feature.attributeId} ${feature.label} ${feature.displayLabel ?? ""} ${feature.ozonCode ?? ""}`,
+  );
+}
+
+function isManufacturerFeature(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("23487") ||
+    text.includes("производитель") ||
+    text.includes("manufacturer") ||
+    text.includes("制造商")
+  );
+}
+
+function isFactoryPackageFeature(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("11650") ||
+    text.includes("количествозаводскихупаковок") ||
+    text.includes("原厂包装数量")
+  );
+}
+
+function isHazardClassFeature(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("9782") ||
+    text.includes("классопасноститовара") ||
+    text.includes("产品危险等级")
+  );
+}
+
+function isWarrantyFeature(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("10400") ||
+    text.includes("гарантия") ||
+    text.includes("warranty") ||
+    text.includes("保证")
+  );
+}
+
+function isShelfLifeFeature(
+  feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">,
+) {
+  const text = featureSearchText(feature);
+  return (
+    text.includes("8205") ||
+    text.includes("срокгодности") ||
+    text.includes("shelflife") ||
+    text.includes("保质期")
+  );
+}
+
+function warrantyOptionDays(value: string) {
+  const normalized = value.toLowerCase().replace(/\s+/g, "");
+  if (/无担保|безгарант|пожизн|lifetime/.test(normalized)) return null;
+  const amountText = normalized.match(/\d+(?:[.,]\d+)?/)?.[0];
+  if (!amountText) return null;
+  const amount = Number(amountText.replace(",", "."));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (/дн|day|天/.test(normalized)) return amount;
+  if (/нед|week|周/.test(normalized)) return amount * 7;
+  if (/месяц|month|个月|月/.test(normalized)) return amount * 30;
+  if (/год|лет|year|年|岁/.test(normalized)) return amount * 365;
+  return null;
+}
+
+function dictionaryDefaultFeature(
+  feature: DraftFeature,
+  mapping: NonNullable<DraftFeature["optionMappings"]>[number] | undefined,
+  fallbackLabel: string,
+  fallbackUploadValue: string,
+  reason: string,
+) {
+  const dictionaryValueId = Number(mapping?.dictionaryValueId);
+  const uploadValue = mapping?.value || fallbackUploadValue;
+  return {
+    ...feature,
+    value: mapping?.label || fallbackLabel,
+    confidence: Math.max(feature.confidence, 0.94),
+    status: "auto" as const,
+    source: "业务默认",
+    reason,
+    ozonAttributeValues: [
+      {
+        ...(Number.isSafeInteger(dictionaryValueId) && dictionaryValueId > 0
+          ? { dictionary_value_id: dictionaryValueId }
+          : {}),
+        value: uploadValue,
+      },
+    ],
+  };
 }
 
 function isColorNameFeature(feature: Pick<DraftFeature, "attributeId" | "label" | "displayLabel" | "ozonCode">) {
@@ -585,14 +831,43 @@ function colorLookupValues(feature: DraftFeature, features: DraftFeature[]) {
 }
 
 function applyBusinessDefaultsToFeature(feature: DraftFeature): DraftFeature {
+  const hasReturnedValue = [
+    ...(feature.ozonAttributeValues?.map((value) => value.value) ?? []),
+    feature.aiJsonValue,
+    feature.value,
+  ].some((value) => String(value ?? "").trim());
+  if (
+    hasReturnedValue &&
+    (Boolean(feature.aiJsonPath) || /AI|快速模式/i.test(feature.source))
+  ) {
+    return feature;
+  }
+
+  if (
+    String(feature.ozonCode || feature.attributeId).replace(/^base:/, "") ===
+    "23249"
+  ) {
+    if (feature.value.trim()) return feature;
+    return {
+      ...feature,
+      value: "1",
+      aiJsonValue: "1",
+      ozonAttributeValues: [{ value: "1" }],
+      confidence: Math.max(feature.confidence, 0.94),
+      status: "auto",
+      source: "业务默认",
+      reason: "AI 和来源数据未返回数量时，默认填写 1。",
+    };
+  }
+
   if (isBrandFeature(feature)) {
     return {
       ...feature,
       value: BRAND_DEFAULT_VALUE,
       confidence: Math.max(feature.confidence, 0.9),
-      status: feature.required ? "review" : feature.status === "missing" ? "review" : feature.status,
+      status: "auto",
       source: "业务默认",
-      reason: "按当前上架规则，品牌字段统一填写“无”。",
+      reason: "按当前上架规则，品牌字段自动填写“没有品牌”。",
     };
   }
 
@@ -601,10 +876,79 @@ function applyBusinessDefaultsToFeature(feature: DraftFeature): DraftFeature {
       ...feature,
       value: COUNTRY_DEFAULT_VALUE,
       confidence: Math.max(feature.confidence, 0.9),
-      status: feature.required ? "review" : feature.status === "missing" ? "review" : feature.status,
+      status: "auto",
       source: "业务默认",
-      reason: "按当前上架规则，国家/产地字段默认填写“中国”。",
+      reason: "按当前上架规则，国家/产地字段自动填写“中国”。",
     };
+  }
+
+  if (isManufacturerFeature(feature)) {
+    return {
+      ...feature,
+      value: MANUFACTURER_DEFAULT_VALUE,
+      aiJsonValue: MANUFACTURER_DEFAULT_VALUE,
+      ozonAttributeValues: [{ value: MANUFACTURER_DEFAULT_VALUE }],
+      confidence: Math.max(feature.confidence, 0.94),
+      status: "auto",
+      source: "业务默认",
+      reason: "按当前上架规则，制造商固定填写 China，并覆盖 AI 返回值。",
+    };
+  }
+
+  if (isFactoryPackageFeature(feature)) {
+    return {
+      ...feature,
+      value: FACTORY_PACKAGE_DEFAULT_VALUE,
+      confidence: Math.max(feature.confidence, 0.94),
+      status: "auto",
+      source: "业务默认",
+      reason: "按当前上架规则，原厂包装数量固定填写 1，并覆盖 AI 返回值。",
+    };
+  }
+
+  if (isHazardClassFeature(feature)) {
+    const safeOption = feature.optionMappings?.find((option) =>
+      /не\s*опасен|不危险|not\s*dangerous/i.test(
+        `${option.label ?? ""} ${option.value}`,
+      ),
+    );
+    return dictionaryDefaultFeature(
+      feature,
+      safeOption,
+      SAFE_HAZARD_DEFAULT_LABEL,
+      SAFE_HAZARD_DEFAULT_UPLOAD_VALUE,
+      "按当前上架规则，产品危险等级固定选择“不危险”，并覆盖 AI 返回值。",
+    );
+  }
+
+  if (isShelfLifeFeature(feature)) {
+    return {
+      ...feature,
+      value: DEFAULT_SHELF_LIFE_DAYS,
+      confidence: Math.max(feature.confidence, 0.94),
+      status: "auto",
+      source: "业务默认",
+      reason: "按当前上架规则，保质期固定填写 30 天，并覆盖 AI 返回值。",
+      ozonAttributeValues: [{ value: DEFAULT_SHELF_LIFE_DAYS }],
+    };
+  }
+
+  if (isWarrantyFeature(feature)) {
+    const warrantyOption = (feature.optionMappings ?? [])
+      .flatMap((option) => {
+        const days = warrantyOptionDays(`${option.label ?? ""} ${option.value}`);
+        return days === null ? [] : [{ option, days }];
+      })
+      .find((candidate) => candidate.days === DEFAULT_WARRANTY_DAYS)?.option;
+    return dictionaryDefaultFeature(
+      feature,
+      warrantyOption
+        ? { ...warrantyOption, label: DEFAULT_WARRANTY_LABEL }
+        : undefined,
+      DEFAULT_WARRANTY_LABEL,
+      DEFAULT_WARRANTY_UPLOAD_VALUE,
+      "按当前上架规则，保证固定填写 30 天（Ozon 字典对应 1 个月），并覆盖 AI 返回值。",
+    );
   }
 
   return feature;
@@ -612,6 +956,93 @@ function applyBusinessDefaultsToFeature(feature: DraftFeature): DraftFeature {
 
 function applyBusinessDefaults(features: DraftFeature[]) {
   return features.map(applyBusinessDefaultsToFeature);
+}
+
+function modelCodeFromTitle(title: string) {
+  const candidates =
+    title.match(
+      /(?:[A-Za-z]{1,12}[-_./]?\d[A-Za-z0-9_-]{1,30}|\d[A-Za-z][A-Za-z0-9_-]{1,30})/g,
+    ) ?? [];
+  return (
+    candidates
+      .map((value) => value.replace(/[./]+$/g, "").trim())
+      .find((value) => value.length >= 3 && value.length <= 40) ?? ""
+  );
+}
+
+function stableProductModel(
+  preparedProduct: PreparedProductFacts,
+  facts: SourceFact[],
+) {
+  const explicitModel = facts.find((fact) => {
+    const key = semanticText(fact.key);
+    return (
+      !/(?:卖家|sku|offer)/i.test(key) &&
+      (key.includes("型号") ||
+        key.includes("款号") ||
+        key.includes("货号") ||
+        key === "model" ||
+        key.includes("modelname"))
+    );
+  });
+  const explicitValue = explicitModel?.value.trim().slice(0, 120) ?? "";
+  if (explicitValue) {
+    return {
+      value: explicitValue,
+      source: explicitModel?.key || "来源型号",
+      reason: "已从商品来源字段提取稳定型号；同一商品的全部 SKU 共用此型号。",
+    };
+  }
+
+  const titleCode = modelCodeFromTitle(preparedProduct.title);
+  if (titleCode) {
+    return {
+      value: titleCode,
+      source: "商品标题",
+      reason: "已从商品标题提取稳定型号；同一商品的全部 SKU 共用此型号。",
+    };
+  }
+
+  const productId = preparedProduct.productId
+    .replace(/[^A-Za-z0-9_-]+/g, "")
+    .slice(0, 44);
+  const fallbackCode =
+    productId ||
+    createHash("sha1")
+      .update(
+        `${preparedProduct.source}\n${preparedProduct.title}`.trim() ||
+          "product-model",
+      )
+      .digest("hex")
+      .slice(0, 12)
+      .toUpperCase();
+  return {
+    value: `M-${fallbackCode}`.slice(0, 50),
+    source: productId ? "来源商品ID" : "系统稳定生成",
+    reason:
+      "来源未提供明确型号，已按来源商品生成固定型号；重复加工及同商品全部 SKU 保持一致。",
+  };
+}
+
+function applyStableProductModel(
+  features: DraftFeature[],
+  preparedProduct: PreparedProductFacts,
+  facts: SourceFact[],
+) {
+  const model = stableProductModel(preparedProduct, facts);
+  return features.map((feature) =>
+    isModelNameFeature(feature)
+      ? {
+          ...feature,
+          value: model.value,
+          confidence: Math.max(feature.confidence, 0.96),
+          status: "auto" as const,
+          source: model.source,
+          reason: model.reason,
+          ozonAttributeValues: [{ value: model.value }],
+        }
+      : feature,
+  );
 }
 
 function isExcludedMediaAttribute(attribute: OzonAttributeSnapshot) {
@@ -649,14 +1080,46 @@ function isMediaOrUploadOnlyFact(fact: SourceFact) {
 }
 
 function findHeuristicValue(attribute: OzonAttributeSnapshot, facts: SourceFact[]) {
-  if (isExcludedMediaAttribute(attribute)) return null;
+  if (
+    isExcludedMediaAttribute(attribute) ||
+    isIgnoredOzonAttribute(attribute)
+  ) {
+    return null;
+  }
   const attrName = normalizeText(attribute.name);
+  const attributeId = String(attribute.ozonAttributeId);
+  const isBristleAttribute = /ворс|щетин|bristle|刷毛|鬃毛|桩材/.test(
+    normalizeText(`${attribute.name} ${attribute.nameZh ?? ""}`),
+  );
+  const selectedSkuPackageFactKeys: Record<string, string[]> = {
+    "4497": ["包装重量(g)", "商品重量(g)"],
+    "4383": ["商品重量(g)", "包装重量(g)"],
+    "6728": ["商品重量(g)", "包装重量(g)"],
+    "9802": ["商品长(mm)", "包装长(mm)"],
+    "9799": ["商品宽(mm)", "包装宽(mm)"],
+  };
+  const selectedSkuPackageFact = selectedSkuPackageFactKeys[attributeId]
+    ? findFact(facts, selectedSkuPackageFactKeys[attributeId])
+    : null;
+  if (selectedSkuPackageFact) {
+    const sourceNumber = Number(numberFromText(selectedSkuPackageFact.value));
+    const normalizedValue =
+      attributeId === "6728" && Number.isFinite(sourceNumber)
+        ? String(sourceNumber / 1000)
+        : numberFromText(selectedSkuPackageFact.value);
+    return {
+      value: normalizedValue,
+      confidence: 0.96,
+      source: selectedSkuPackageFact.key,
+      reason: "已按当前所选 1688 SKU 的商品件重尺逐项匹配并换算为 Ozon 单位。",
+    };
+  }
   if (isBrandText(attribute.name) || isBrandText(attribute.ozonAttributeId)) {
     return {
       value: BRAND_DEFAULT_VALUE,
       confidence: 0.9,
       source: "业务默认",
-      reason: "按当前上架规则，品牌字段统一填写“无”。",
+      reason: "按当前上架规则，品牌字段自动填写“没有品牌”。",
     };
   }
 
@@ -671,6 +1134,12 @@ function findHeuristicValue(attribute: OzonAttributeSnapshot, facts: SourceFact[
 
   const direct = facts.find((fact) => {
     const factKey = normalizeText(fact.key);
+    if (
+      isBristleAttribute &&
+      !/ворс|щетин|bristle|刷毛|鬃毛|毛料|桩材/.test(factKey)
+    ) {
+      return false;
+    }
     return factKey && (attrName.includes(factKey) || factKey.includes(attrName));
   });
   if (direct) {
@@ -683,6 +1152,7 @@ function findHeuristicValue(attribute: OzonAttributeSnapshot, facts: SourceFact[
   }
 
   for (const group of aliasGroups) {
+    if (isBristleAttribute) continue;
     if (!group.patterns.some((pattern) => attrName.includes(normalizeText(pattern)))) continue;
     const matched = facts.find((fact) => group.keys.some((key) => normalizeText(fact.key).includes(normalizeText(key))));
     if (matched) {
@@ -707,7 +1177,11 @@ function stringifyAiValue(value: unknown) {
 
 function buildCategoryDraft(attributes: OzonAttributeSnapshot[], facts: SourceFact[]) {
   return attributes
-    .filter((attribute) => !isExcludedMediaAttribute(attribute))
+    .filter(
+      (attribute) =>
+        !isExcludedMediaAttribute(attribute) &&
+        !isIgnoredOzonAttribute(attribute),
+    )
     .map<DraftFeature>((attribute) => {
       const matched = findHeuristicValue(attribute, facts);
       const hasDictionary = Boolean(
@@ -768,6 +1242,93 @@ function buildCategoryDraft(attributes: OzonAttributeSnapshot[], facts: SourceFa
         optionMappings,
       };
     });
+}
+
+const SKU_SPEC_ATTRIBUTE_RULES: Array<{
+  source: RegExp;
+  target: RegExp;
+}> = [
+  {
+    source: /颜色|色号|色彩|color|colour|цвет/i,
+    target: /颜色|色号|color|colour|цвет/i,
+  },
+  {
+    source: /尺寸|尺码|大小|号型|size|размер/i,
+    target: /尺寸|尺码|号型|size|размер/i,
+  },
+  {
+    source: /型号|款式|形状|类型|规格|model|style|форма|тип/i,
+    target: /型号|款式|形状|产品形式|model|style|форма|тип/i,
+  },
+  {
+    source: /容量|容积|净含量|capacity|volume|объ[её]м/i,
+    target: /容量|容积|净含量|capacity|volume|объ[её]м/i,
+  },
+  {
+    source: /包装数量|每件数量|件数|数量|套装|quantity|count|количество/i,
+    target: /包装数量|每件数量|件数|数量|套装|quantity|count|количество/i,
+  },
+];
+
+function buildVariantSpecDraft(
+  variant: PreparedProductVariant,
+  categoryDraft: DraftFeature[],
+  attributes: OzonAttributeSnapshot[],
+) {
+  const attributeById = new Map(
+    attributes.map((attribute) => [attribute.ozonAttributeId, attribute]),
+  );
+  const matched = new Map<string, DraftFeature>();
+  for (const fact of [...variant.specs, ...variant.package]) {
+    const sourceKey = fact.key.trim();
+    const sourceValue = fact.value.trim();
+    if (!sourceKey || !sourceValue) continue;
+    const normalizedSourceKey = normalizeText(sourceKey);
+    const rule = SKU_SPEC_ATTRIBUTE_RULES.find((candidate) =>
+      candidate.source.test(sourceKey),
+    );
+    const candidates = categoryDraft
+      .filter((feature) => !isModelNameFeature(feature))
+      .map((feature) => {
+        const attribute = attributeById.get(feature.attributeId);
+        const targetText = [
+          feature.displayLabel,
+          feature.label,
+          attribute?.nameZh,
+          attribute?.name,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const normalizedTarget = normalizeText(targetText);
+        const score =
+          normalizedSourceKey &&
+          (normalizedTarget.includes(normalizedSourceKey) ||
+            normalizedSourceKey.includes(normalizedTarget))
+            ? 3
+            : rule?.target.test(targetText)
+              ? 2
+              : 0;
+        return { feature, score };
+      })
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score);
+    const selected = candidates[0]?.feature;
+    if (!selected || matched.has(selected.attributeId)) continue;
+    matched.set(selected.attributeId, {
+      ...selected,
+      value: sourceValue,
+      confidence: 0.96,
+      status: "review",
+      source: `1688 SKU规格：${sourceKey}`,
+      reason:
+        "程序已按 SKU 规格名称匹配到当前 Ozon 属性；字典值会继续自动校验。",
+      ozonAttributeValues: undefined,
+      aiJsonKey: sourceKey,
+      aiJsonPath: `variants.${variant.skuId}.${sourceKey}`,
+      aiJsonValue: sourceValue,
+    });
+  }
+  return [...matched.values()];
 }
 
 async function resolveFeatureDictionaryValues(
@@ -841,13 +1402,27 @@ async function resolveFeatureDictionaryValues(
           ? "Китай"
           : suppliedUploadValue || feature.value.trim();
       const normalizedLookup = normalizeText(lookupValue);
-      const cachedMatches = attribute.values.filter(
+      const isActiveChlorineComposition =
+        attribute.ozonAttributeId === "10166" &&
+        /次氯酸|有效氯|含氯|hypochlor|хлорноват|хлорсодержащ/i.test(
+          lookupValue,
+        );
+      const semanticMatches = isActiveChlorineComposition
+        ? attribute.values.filter((candidate) =>
+            /含氯|активн.*хлор|хлорсодержащ/i.test(
+              `${candidate.value} ${candidate.valueZh ?? ""}`,
+            ),
+          )
+        : [];
+      const cachedMatches = semanticMatches.length
+        ? semanticMatches
+        : attribute.values.filter(
         (candidate) =>
           (suppliedDictionaryValueId &&
             Number(candidate.ozonValueId) === suppliedDictionaryValueId) ||
           normalizeText(candidate.value) === normalizedLookup ||
           normalizeText(candidate.valueZh || "") === normalizedLookup,
-      );
+        );
       const databaseMatches = cachedMatches.length
         ? cachedMatches
         : await prisma.ozonAttributeValue.findMany({
@@ -872,6 +1447,9 @@ async function resolveFeatureDictionaryValues(
       ) {
         return {
           ...feature,
+          ...(isActiveChlorineComposition
+            ? { value: matched.valueZh || matched.value }
+            : {}),
           ozonAttributeValues: [
             {
               dictionary_value_id: dictionaryValueId,
@@ -894,6 +1472,7 @@ async function resolveFeatureDictionaryValues(
 type ParsedAiFeatureResponse = {
   displayFeatures: z.infer<typeof aiDisplayFeatureItemSchema>[];
   uploadFeatures: z.infer<typeof aiFeatureItemSchema>[];
+  variants: z.infer<typeof aiVariantFeatureResponseSchema>[];
   notes: string[];
   repaired: boolean;
   displayOnlyIds: string[];
@@ -955,6 +1534,7 @@ function parseAiFeatureResponse(raw: string): ParsedAiFeatureResponse {
 
   const displayFeatures: z.infer<typeof aiDisplayFeatureItemSchema>[] = [];
   const uploadFeatures: z.infer<typeof aiFeatureItemSchema>[] = [];
+  const variants: z.infer<typeof aiVariantFeatureResponseSchema>[] = [];
   const notes: string[] = [];
 
   for (const value of parsedValues) {
@@ -963,7 +1543,15 @@ function parseAiFeatureResponse(raw: string): ParsedAiFeatureResponse {
     if (dual.success) {
       displayFeatures.push(...dual.data.displayFeatures);
       uploadFeatures.push(...dual.data.uploadFeatures);
+      variants.push(...dual.data.variants);
       notes.push(...(dual.data.notes ?? []));
+    }
+
+    if (Array.isArray(record.variants)) {
+      for (const candidate of record.variants) {
+        const parsed = aiVariantFeatureResponseSchema.safeParse(candidate);
+        if (parsed.success) variants.push(parsed.data);
+      }
     }
 
     const displayCandidates =
@@ -1034,10 +1622,14 @@ function parseAiFeatureResponse(raw: string): ParsedAiFeatureResponse {
   );
   const displayIds = new Set(uniqueDisplay.map((feature) => feature.attributeId));
   const uploadIds = new Set(uniqueUpload.map((feature) => feature.attributeId));
+  const uniqueVariants = Array.from(
+    new Map(variants.map((variant) => [variant.skuId, variant])).values(),
+  );
 
   return {
     displayFeatures: uniqueDisplay,
     uploadFeatures: uniqueUpload,
+    variants: uniqueVariants,
     notes: [...new Set(notes)],
     repaired,
     displayOnlyIds: [...displayIds].filter((attributeId) => !uploadIds.has(attributeId)),
@@ -1106,55 +1698,81 @@ function mergeAiFeatures(
   }));
 }
 
+function applySelectedSkuPackageValues(
+  features: DraftFeature[],
+  facts: SourceFact[],
+) {
+  const factKeysByAttributeId: Record<string, string[]> = {
+    "4497": ["包装重量(g)", "商品重量(g)"],
+    "4383": ["商品重量(g)", "包装重量(g)"],
+    "6728": ["商品重量(g)", "包装重量(g)"],
+    "9802": ["商品长(mm)", "包装长(mm)"],
+    "9799": ["商品宽(mm)", "包装宽(mm)"],
+  };
+  return features.map((feature) => {
+    const attributeId = String(feature.ozonCode || feature.attributeId);
+    const factKeys = factKeysByAttributeId[attributeId];
+    if (!factKeys) return feature;
+    const matched = findFact(facts, factKeys);
+    if (!matched) return feature;
+    const sourceValue = numberFromText(matched.value);
+    const sourceNumber = Number(sourceValue);
+    const value =
+      attributeId === "6728" && Number.isFinite(sourceNumber)
+        ? String(sourceNumber / 1000)
+        : sourceValue;
+    if (!value) return feature;
+    return {
+      ...feature,
+      value,
+      confidence: 0.98,
+      status: "auto" as const,
+      source: matched.key,
+      reason:
+        "当前值来自所选 1688 SKU 对应的商品件重尺，优先级高于通用 AI 推断。",
+      ozonAttributeValues: [{ value }],
+    };
+  });
+}
+
 function modelCanFillFeatures(model: { capabilities: Record<string, unknown>; isAvailable?: boolean }) {
   const capabilities = model.capabilities ?? {};
   const isImageOnly = Boolean(capabilities.image_gen || capabilities.image_edit) && !capabilities.text;
   return model.isAvailable !== false && Boolean(capabilities.text || capabilities.structured_output || capabilities.vision) && !isImageOnly;
 }
 
-function attributeValuesForAi(
-  attribute: OzonAttributeSnapshot,
-  facts: SourceFact[],
-) {
-  const factValues = facts
-    .flatMap((fact) => [fact.key, fact.value])
-    .map(normalizeText)
-    .filter(Boolean);
-  const preferredValues = [
-    ...(isBrandText(attribute.name) ? ["Нет бренда", "无品牌"] : []),
-    ...(isCountryText(attribute.name) ? ["Китай", "中国"] : []),
-  ].map(normalizeText);
+function attributeValuesForAi(attribute: OzonAttributeSnapshot) {
+  return attribute.values;
+}
 
-  return attribute.values
-    .map((value, index) => {
-      const candidates = [normalizeText(value.value), normalizeText(value.valueZh || "")]
-        .filter(Boolean);
-      let score = 0;
-      if (
-        candidates.some((candidate) => preferredValues.includes(candidate))
-      ) {
-        score = 1000;
-      } else {
-        for (const candidate of candidates) {
-          for (const fact of factValues) {
-            if (candidate === fact) score = Math.max(score, 900);
-            else if (
-              candidate.length >= 2 &&
-              fact.length >= 2 &&
-              (candidate.includes(fact) || fact.includes(candidate))
-            ) {
-              score = Math.max(score, 700);
-            }
-          }
-        }
-      }
-      return { value, index, score };
-    })
-    .sort(
-      (left, right) =>
-        right.score - left.score || left.index - right.index,
-    )
-    .map((entry) => entry.value);
+function compactPreparedProductForPrompt(
+  product: ReturnType<typeof prepareProductFacts>,
+  options: {
+    factLimit: number;
+    factValueLimit: number;
+    descriptionLimit: number;
+    variantSpecLimit: number;
+  },
+) {
+  const compactFacts = (values: Array<{ key: string; value: string }>, limit: number) =>
+    values.slice(0, limit).map((fact) => ({
+      key: fact.key.slice(0, 120),
+      value: fact.value.slice(0, options.factValueLimit),
+    }));
+
+  return {
+    ...product,
+    description: product.description.slice(0, options.descriptionLimit),
+    facts: compactFacts(product.facts, options.factLimit),
+    package: compactFacts(product.package, product.package.length),
+    variants: product.variants.map((variant) => ({
+      ...variant,
+      title: variant.title.slice(0, 240),
+      specText: variant.specText.slice(0, 500),
+      specs: compactFacts(variant.specs, options.variantSpecLimit),
+      package: compactFacts(variant.package, variant.package.length),
+    })),
+  };
 }
 
 async function hydratePriorityDictionaryValues(
@@ -1163,10 +1781,25 @@ async function hydratePriorityDictionaryValues(
 ) {
   const targets = attributes.flatMap((attribute) => {
     if (isBrandText(attribute.name)) {
-      return [{ attribute, uploadValue: "Нет бренда", displayValue: "无" }];
+      return [
+        {
+          attribute,
+          uploadValue: "Нет бренда",
+          displayValue: BRAND_DEFAULT_VALUE,
+        },
+      ];
     }
     if (isCountryText(attribute.name)) {
       return [{ attribute, uploadValue: "Китай", displayValue: "中国" }];
+    }
+    if (attribute.ozonAttributeId === "10400") {
+      return [
+        {
+          attribute,
+          uploadValue: DEFAULT_WARRANTY_UPLOAD_VALUE,
+          displayValue: DEFAULT_WARRANTY_LABEL,
+        },
+      ];
     }
     return [];
   });
@@ -1249,16 +1882,43 @@ function salvageDisplayFeatureFragments(raw: string) {
 }
 
 export async function POST(request: NextRequest) {
+  let workflowContext: ProcessingWorkflowContext | null = null;
   try {
     const parsed = featureDraftRequestSchema.parse(await request.json());
-    const preparedProduct = isPreparedProductFacts(parsed.preparedProduct)
-      ? parsed.preparedProduct
-      : prepareProductFacts(parsed.scrapedData);
+    if (parsed.workflowItemId && parsed.workflowRunId) {
+      workflowContext = {
+        itemId: parsed.workflowItemId,
+        runId: parsed.workflowRunId,
+      };
+    }
+    const respond = async <T extends WorkflowFeatureResult>(result: T) => {
+      await persistWorkflowFeatureResult(workflowContext, result);
+      return ok(result);
+    };
+    const currentPreparedProduct = prepareProductFacts(parsed.scrapedData);
+    const preparedProduct =
+      currentPreparedProduct.title ||
+      currentPreparedProduct.facts.length ||
+      currentPreparedProduct.variants.length
+        ? currentPreparedProduct
+        : isPreparedProductFacts(parsed.preparedProduct)
+          ? parsed.preparedProduct
+          : currentPreparedProduct;
     const promptAudit = auditProductFacts(
       parsed.scrapedData,
       preparedProduct,
     );
-    const facts = extractSourceFacts(parsed.scrapedData);
+    const facts = extractSourceFacts({
+      title: preparedProduct.title,
+      source: preparedProduct.source,
+      price: preparedProduct.price,
+      description: preparedProduct.description,
+      characteristics: [
+        ...preparedProduct.facts,
+        ...preparedProduct.package,
+      ],
+      specs: preparedProduct.variants.flatMap((variant) => variant.specs),
+    });
     const snapshot = await getOzonFeatureSnapshot({ categoryId: parsed.categoryId ?? undefined });
     const category = snapshot.selectedCategory;
     const categorySummary = category
@@ -1273,7 +1933,7 @@ export async function POST(request: NextRequest) {
     const listingBaseDraft = applyBusinessDefaults(buildListingBaseDraft(facts, categorySummary));
 
     if (!category?.attributes?.length) {
-      return ok({
+      return respond({
         category: categorySummary,
         features: [...listingBaseDraft, ...buildGenericDraft(facts)],
         preparedProduct,
@@ -1288,12 +1948,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    await hydratePriorityDictionaryValues(category.id, category.attributes);
-    const categoryDraft = buildCategoryDraft(category.attributes, facts);
+    const categoryAttributes = category.attributes;
+    await hydratePriorityDictionaryValues(category.id, categoryAttributes);
+    const categoryDraft = applyStableProductModel(
+      applyBusinessDefaults(buildCategoryDraft(category.attributes, facts)),
+      preparedProduct,
+      facts,
+    );
     const baseDraft = [...listingBaseDraft, ...categoryDraft];
     const modelId = parsed.model?.trim();
     if (!modelId) {
-      return ok({
+      return respond({
         category: categorySummary,
         features: baseDraft,
         preparedProduct,
@@ -1312,12 +1977,27 @@ export async function POST(request: NextRequest) {
         attribute,
       ]),
     );
-    // categoryDraft 已在 buildCategoryDraft 中排除视频、PDF、富媒体等
+    // categoryDraft 已在 buildCategoryDraft 中排除视频、PDF、富媒体等。
+    // 品牌、型号、原产国和制造商由本地确定性规则填写，避免把相应字典发给 AI，
+    // 也避免同商品的不同 SKU 获得不同的随机型号。
     // 不应再依据必填状态、当前值或属性名对白名单做二次裁剪：
     // 第二阶段必须看到当前 Ozon 类目的全部可填写属性。
-    const aiAttributeDraft = categoryDraft;
-    const promptPayload = {
-      productFacts: preparedProduct,
+    const aiAttributeDraft = categoryDraft.filter(
+      (feature) =>
+        !isBrandFeature(feature) &&
+        !isModelNameFeature(feature) &&
+        !isCountryFeature(feature) &&
+        !isManufacturerFeature(feature),
+    );
+    const browserPrompt = isBrowserAiProvider(parsed.providerId);
+    const buildPromptPayload = (
+      allowedValueLimit: number,
+      productOptions: Parameters<typeof compactPreparedProductForPrompt>[1],
+    ) => ({
+      productFacts: compactPreparedProductForPrompt(
+        preparedProduct,
+        productOptions,
+      ),
       matchedCategory: {
         label: category.label,
         path: category.path,
@@ -1336,13 +2016,13 @@ export async function POST(request: NextRequest) {
             required: attribute.isRequired,
             allowedValues:
               attribute.dictionaryId && attribute.dictionaryId !== "0"
-                ? attributeValuesForAi(attribute, facts)
-                    .slice(0, 80)
+                ? attributeValuesForAi(attribute)
+                    .slice(0, allowedValueLimit)
                     .map((value) => {
                       const dictionaryValueId = Number(value.ozonValueId);
                       return {
-                        value: value.value.slice(0, 140),
-                        valueZh: (value.valueZh || value.value).slice(0, 140),
+                        value: value.value.slice(0, 120),
+                        valueZh: (value.valueZh || value.value).slice(0, 120),
                         ...(Number.isSafeInteger(dictionaryValueId) &&
                         dictionaryValueId > 0
                           ? { dictionary_value_id: dictionaryValueId }
@@ -1353,25 +2033,90 @@ export async function POST(request: NextRequest) {
           },
         ];
       }),
-    };
+    });
+    let promptPayload = buildPromptPayload(
+      browserPrompt ? 12 : 80,
+      browserPrompt
+        ? {
+            factLimit: 70,
+            factValueLimit: 320,
+            descriptionLimit: 1000,
+            variantSpecLimit: 24,
+          }
+        : {
+            factLimit: preparedProduct.facts.length,
+            factValueLimit: 600,
+            descriptionLimit: 1800,
+            variantSpecLimit: 160,
+          },
+    );
+    if (browserPrompt && JSON.stringify(promptPayload).length > 26_000) {
+      promptPayload = buildPromptPayload(6, {
+        factLimit: 48,
+        factValueLimit: 240,
+        descriptionLimit: 700,
+        variantSpecLimit: 16,
+      });
+    }
+    if (browserPrompt && JSON.stringify(promptPayload).length > 26_000) {
+      promptPayload = buildPromptPayload(3, {
+        factLimit: 32,
+        factValueLimit: 180,
+        descriptionLimit: 500,
+        variantSpecLimit: 12,
+      });
+    }
+    if (browserPrompt && JSON.stringify(promptPayload).length > 26_000) {
+      promptPayload = buildPromptPayload(0, {
+        factLimit: 24,
+        factValueLimit: 160,
+        descriptionLimit: 400,
+        variantSpecLimit: 10,
+      });
+    }
 
     const systemPrompt =
       parsed.systemPrompt || DEFAULT_FEATURE_FILL_SYSTEM_PROMPT;
-    const taskPrompt =
-      parsed.customPrompt || DEFAULT_FEATURE_FILL_TASK_PROMPT;
+    const taskPrompt = [
+      parsed.customPrompt || DEFAULT_FEATURE_FILL_TASK_PROMPT,
+      FEATURE_COVERAGE_GUIDANCE,
+      preparedProduct.variants.length > 1 ? SKU_VARIANT_GUIDANCE : "",
+    ].join("\n\n");
+    const visualImages = browserPrompt && !parsed.precomputedAiText
+      ? await featureVisionImages(parsed.scrapedData, request.nextUrl.origin)
+      : [];
+    const serializedPromptPayload = browserPrompt
+      ? JSON.stringify(promptPayload)
+      : JSON.stringify(promptPayload, null, 2);
     const userPrompt = [
       taskPrompt,
-      `输入 JSON：\n${JSON.stringify(promptPayload, null, 2)}`,
+      visualImages.length
+        ? `本次附带 ${visualImages.length} 张商品实拍图，仅作为可见外观事实的补充依据。`
+        : "本次没有可用商品实拍图，只依据结构化商品事实填写。",
+      `输入 JSON：\n${serializedPromptPayload}`,
     ].filter(Boolean).join("\n\n");
+    const sentPromptChars = parsed.precomputedAiText
+      ? 0
+      : systemPrompt.length + userPrompt.length;
+    if (browserPrompt && !parsed.precomputedAiText) {
+      console.info(
+        `[listing-feature-draft] browser prompt chars=${sentPromptChars} payload=${serializedPromptPayload.length} attributes=${aiAttributeDraft.length} variants=${preparedProduct.variants.length} images=${visualImages.length}`,
+      );
+    }
 
     let completionText: string;
     let responseProviderId: string;
     let responseProviderName: string;
-    if (isBrowserAiProvider(parsed.providerId)) {
+    if (parsed.precomputedAiText) {
+      completionText = parsed.precomputedAiText;
+      responseProviderId = parsed.providerId || BROWSER_AI_PROVIDER_ID;
+      responseProviderName = "China Product to Ozon 快速模式";
+    } else if (isBrowserAiProvider(parsed.providerId)) {
       completionText = await generateBrowserText({
         model: modelId,
         systemPrompt,
         userPrompt,
+        images: visualImages,
       });
       responseProviderId = BROWSER_AI_PROVIDER_ID;
       responseProviderName = BROWSER_AI_PROVIDER_NAME;
@@ -1379,7 +2124,7 @@ export async function POST(request: NextRequest) {
       const { provider, adapter } = await getProviderAdapter(parsed.providerId ?? undefined);
       const selectedModel = provider.models.find((model) => model.modelId === modelId);
       if (!selectedModel || !modelCanFillFeatures(selectedModel)) {
-        return ok({
+        return respond({
           category: categorySummary,
           features: baseDraft,
           preparedProduct,
@@ -1410,15 +2155,18 @@ export async function POST(request: NextRequest) {
     let salvagedFragments = false;
     try {
       aiParsed = parseAiFeatureResponse(completionText);
-      if (!aiParsed.uploadFeatures.length) {
-        throw new Error("AI 返回中没有可用的 uploadFeatures。");
+      if (
+        !aiParsed.uploadFeatures.length &&
+        !aiParsed.variants.some((variant) => variant.uploadFeatures.length)
+      ) {
+        throw new Error("AI 返回中没有可用的公共或 SKU uploadFeatures。");
       }
     } catch (error) {
       const salvaged = salvageFeatureFragments(completionText);
       const salvagedDisplay =
         salvageDisplayFeatureFragments(completionText);
       if (!salvaged.length && !salvagedDisplay.length) {
-        return ok({
+        return respond({
           category: categorySummary,
           features: baseDraft,
           preparedProduct,
@@ -1426,6 +2174,7 @@ export async function POST(request: NextRequest) {
             ...promptAudit,
             jsonRepaired: false,
             sentAttributeCount: aiAttributeDraft.length,
+            sentPromptChars,
           },
           aiStatus: {
             ok: false,
@@ -1457,6 +2206,7 @@ export async function POST(request: NextRequest) {
       aiParsed = {
         displayFeatures: salvagedDisplay,
         uploadFeatures: salvaged,
+        variants: [],
         notes: [],
         repaired: true,
         displayOnlyIds: [...displayIds].filter(
@@ -1492,16 +2242,108 @@ export async function POST(request: NextRequest) {
       ...returnedDisplayKnownIds,
     ]);
     const mergedCategoryDraft = await resolveFeatureDictionaryValues(
-      mergeAiFeatures(categoryDraft, aiParsed),
+      applySelectedSkuPackageValues(
+        mergeAiFeatures(categoryDraft, aiParsed),
+        facts,
+      ),
       category.attributes,
     );
+    const aiVariantBySkuId = new Map(
+      aiParsed.variants.map((variant) => [variant.skuId, variant]),
+    );
+    const variantFeatures = await Promise.all(
+      preparedProduct.variants.map(async (variant) => {
+        const aiVariant = aiVariantBySkuId.get(variant.skuId);
+        const derivedDraft = buildVariantSpecDraft(
+          variant,
+          categoryDraft,
+          categoryAttributes,
+        );
+        const uploadFeatures =
+          aiVariant?.uploadFeatures.filter((feature) =>
+            Boolean(stringifyAiValue(feature.value)),
+          ) ?? [];
+        const displayFeatures = aiVariant?.displayFeatures ?? [];
+        const returnedIds = new Set([
+          ...uploadFeatures.map((feature) => feature.attributeId),
+          ...displayFeatures.map((feature) => feature.attributeId),
+        ]);
+        const variantBaseById = new Map(
+          derivedDraft.map((feature) => [feature.attributeId, feature]),
+        );
+        for (const attributeId of returnedIds) {
+          if (variantBaseById.has(attributeId)) continue;
+          const baseFeature = categoryDraft.find(
+            (feature) => feature.attributeId === attributeId,
+          );
+          if (baseFeature) variantBaseById.set(attributeId, baseFeature);
+        }
+        const variantParsed: ParsedAiFeatureResponse = {
+          displayFeatures,
+          uploadFeatures,
+          variants: [],
+          notes: [],
+          repaired: aiParsed.repaired,
+          displayOnlyIds: [],
+          uploadOnlyIds: [],
+        };
+        const draft = variantBaseById.size
+          ? await resolveFeatureDictionaryValues(
+              mergeAiFeatures(
+                [...variantBaseById.values()],
+                variantParsed,
+              ),
+              categoryAttributes,
+            )
+          : [];
+        const fallbackSpecLine = [...variant.specs, ...variant.package]
+          .map((fact) => {
+            const key = fact.key.replace(/[|｜=]/g, "/").trim();
+            const value = fact.value.replace(/[|｜]/g, "/").trim();
+            return key && value ? `${key}=${value}` : "";
+          })
+          .filter(Boolean)
+          .join("｜");
+        return {
+          skuId: variant.skuId,
+          title: variant.title,
+          specText: variant.specText,
+          specLine:
+            aiVariant?.specLine ||
+            fallbackSpecLine ||
+            `规格=${variant.specText || variant.title || variant.skuId}`,
+          price: variant.price,
+          stock: variant.stock,
+          package: variant.package,
+          features: draft,
+          status:
+            draft.length
+              ? "matched"
+              : aiVariant
+                ? "review"
+                : "missing",
+        };
+      }),
+    );
+    const returnedVariantIds = new Set(aiParsed.variants.map((variant) => variant.skuId));
+    const expectedVariantIds = new Set(
+      preparedProduct.variants.map((variant) => variant.skuId),
+    );
+    const matchedVariantCount = [...expectedVariantIds].filter((skuId) =>
+      returnedVariantIds.has(skuId),
+    ).length;
+    const effectiveVariantCount = variantFeatures.filter(
+      (variant) => variant.features.length > 0,
+    ).length;
     const requiredFeatures = mergedCategoryDraft.filter(
       (feature) => feature.required,
     );
     const requiredFilled = requiredFeatures.filter((feature) =>
       feature.value.trim(),
     ).length;
-    const aiSucceeded = returnedKnownIds.size > 0;
+    const aiSucceeded =
+      returnedKnownIds.size > 0 ||
+      effectiveVariantCount > 0;
     const responseNotes = [...aiParsed.notes];
     if (aiParsed.repaired) {
       responseNotes.unshift(
@@ -1520,12 +2362,21 @@ export async function POST(request: NextRequest) {
         `AI 返回了 ${returnedAnyKnownIds.size}/${categoryDraft.length} 个可展示类目字段，其中 ${returnedKnownIds.size} 个包含 Ozon 上传值；其余字段保留本地匹配值或待人工填写。`,
       );
     }
-    return ok({
+    if (
+      preparedProduct.variants.length > 1 &&
+      effectiveVariantCount < preparedProduct.variants.length
+    ) {
+      responseNotes.push(
+        `已生成 ${effectiveVariantCount}/${preparedProduct.variants.length} 个 SKU 规格结果，其中 AI 原样返回 ${matchedVariantCount} 个；缺少的 SKU 已保留原始规格摘要并标记为待确认。`,
+      );
+    }
+    return respond({
       category: categorySummary,
       features: [
         ...listingBaseDraft,
         ...mergedCategoryDraft,
       ],
+      variantFeatures,
       preparedProduct,
       promptAudit: {
         ...promptAudit,
@@ -1539,8 +2390,13 @@ export async function POST(request: NextRequest) {
           ),
         ).length,
         sentAttributeCount: aiAttributeDraft.length,
+        sentPromptChars,
+        visualEvidenceCount: visualImages.length,
         returnedAttributeCount: returnedAnyKnownIds.size,
         returnedUploadAttributeCount: returnedKnownIds.size,
+        returnedVariantCount: matchedVariantCount,
+        effectiveVariantCount,
+        variantCount: preparedProduct.variants.length,
         attributeCount: categoryDraft.length,
         requiredFilled,
         requiredCount: requiredFeatures.length,
@@ -1548,7 +2404,7 @@ export async function POST(request: NextRequest) {
       aiStatus: {
         ok: aiSucceeded,
         message: aiSucceeded
-          ? `已使用 ${modelId} 返回 ${returnedAnyKnownIds.size}/${categoryDraft.length} 个可展示类目字段，其中 ${returnedKnownIds.size} 个包含 Ozon 上传值；必填字段已填写 ${requiredFilled}/${requiredFeatures.length}。`
+          ? `已使用 ${modelId} 返回 ${returnedAnyKnownIds.size}/${categoryDraft.length} 个公共类目字段，并生成 ${effectiveVariantCount}/${preparedProduct.variants.length} 个 SKU 规格结果；必填字段已填写 ${requiredFilled}/${requiredFeatures.length}。`
           : returnedDisplayKnownIds.size
             ? `模型返回了 ${returnedDisplayKnownIds.size} 个中文展示字段，但没有完整返回 Ozon 上传值；界面已回填，请重新匹配补全上传值。`
             : `模型没有返回当前类目的有效 attributeId，已保留本地草稿，请查看原始回答后重试。`,
@@ -1561,9 +2417,25 @@ export async function POST(request: NextRequest) {
         model: modelId,
         generatedAt: new Date().toISOString(),
         ozonMapping: ozonMapping.recognized ? ozonMapping : null,
+        coverage: {
+          sentAttributeCount: aiAttributeDraft.length,
+          returnedAttributeCount: returnedAnyKnownIds.size,
+          returnedUploadAttributeCount: returnedKnownIds.size,
+          visualEvidenceCount: visualImages.length,
+          variantCount: preparedProduct.variants.length,
+          returnedVariantCount: matchedVariantCount,
+          effectiveVariantCount,
+        },
       },
     });
   } catch (error) {
+    if (workflowContext) {
+      const message =
+        error instanceof Error ? error.message : "特征匹配请求异常";
+      await persistWorkflowFeatureFailure(workflowContext, message).catch(
+        () => undefined,
+      );
+    }
     return handleRouteError(error);
   }
 }

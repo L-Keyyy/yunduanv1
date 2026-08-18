@@ -8,6 +8,7 @@ export type PreparedProductVariant = {
   title: string;
   specText: string;
   specs: ProductFact[];
+  package: ProductFact[];
   price: string;
   stock: string;
 };
@@ -52,6 +53,8 @@ function isPreparedProductVariant(
     isString(record.specText) &&
     Array.isArray(record.specs) &&
     record.specs.every(isProductFact) &&
+    Array.isArray(record.package) &&
+    record.package.every(isProductFact) &&
     isString(record.price) &&
     isString(record.stock)
   );
@@ -112,6 +115,36 @@ function firstText(values: unknown[], maxLength = 600) {
     if (text) return text;
   }
   return "";
+}
+
+function numericText(value: unknown) {
+  const text = scalarText(value).trim();
+  const matched = text.match(/-?\d+(?:[.,]\d+)?/);
+  return matched ? matched[0].replace(",", ".") : "";
+}
+
+function dimensionMillimeters(value: unknown, unitValue: unknown) {
+  const amount = Number(numericText(value));
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  const unit = `${scalarText(unitValue)} ${scalarText(value)}`
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  const multiplier = /cm|厘米|公分/.test(unit)
+    ? 10
+    : /(^|[^m])m($|[^m])|米/.test(unit)
+      ? 1000
+      : 1;
+  return String(Math.round(amount * multiplier * 1000) / 1000);
+}
+
+function weightGrams(value: unknown, unitValue: unknown) {
+  const amount = Number(numericText(value));
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  const unit = `${scalarText(unitValue)} ${scalarText(value)}`
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  const multiplier = /kg|公斤|千克/.test(unit) ? 1000 : 1;
+  return String(Math.round(amount * multiplier * 1000) / 1000);
 }
 
 function joinTextList(value: unknown) {
@@ -241,9 +274,17 @@ function variantFacts(value: unknown): PreparedProductVariant | null {
   const variant = asRecord(value);
   if (!Object.keys(variant).length) return null;
   const specs: ProductFact[] = [];
+  const packageFacts: ProductFact[] = [];
   addRecordFacts(specs, variant.specs);
   addArrayFacts(specs, variant.characteristics);
   addArrayFacts(specs, variant.attributes);
+  addRecordFacts(
+    packageFacts,
+    variant.packageInfo ??
+      variant.packaging ??
+      variant.package ??
+      variant.dimensions,
+  );
   return {
     skuId: firstText([variant.skuId, variant.sku_id, variant.id], 120),
     title: firstText([variant.title, variant.name], 500),
@@ -252,6 +293,7 @@ function variantFacts(value: unknown): PreparedProductVariant | null {
       300,
     ),
     specs: deduplicateFacts(specs).slice(0, 40),
+    package: deduplicateFacts(packageFacts).slice(0, 30),
     price: firstText([variant.price, variant.salePrice], 80),
     stock: firstText([variant.stock, variant.quantity], 80),
   };
@@ -276,7 +318,6 @@ function selectedVariants(data: Record<string, unknown>) {
       })
     : variants;
   const normalized = selected
-    .slice(0, 60)
     .map(variantFacts)
     .filter((value): value is PreparedProductVariant => Boolean(value));
 
@@ -292,8 +333,15 @@ export function prepareProductFacts(
 ): PreparedProductFacts {
   const description = asRecord(data.description);
   const pricing = asRecord(data.pricing);
+  const selectedVariant = asRecord(data.selectedVariant);
   const packageInfo = asRecord(
-    data.packageInfo ?? data.packageWeight ?? data.packaging ?? data.package,
+    selectedVariant.packageInfo ??
+      selectedVariant.packaging ??
+      selectedVariant.package ??
+      data.packageInfo ??
+      data.packageWeight ??
+      data.packaging ??
+      data.package,
   );
   const facts: ProductFact[] = [];
 
@@ -313,15 +361,44 @@ export function prepareProductFacts(
   addArrayFacts(facts, data.selectedVariant, "SKU ");
 
   const packageFacts: ProductFact[] = [];
+  const dimensionUnit =
+    packageInfo.dimensionUnit ?? packageInfo.sizeUnit ?? packageInfo.unit;
+  const weightUnit = packageInfo.weightUnit ?? packageInfo.unit;
+  const packageWeight = weightGrams(
+    packageInfo.weightG ??
+      packageInfo.weight ??
+      packageInfo.value ??
+      packageInfo.weightKg,
+    packageInfo.weightG !== undefined
+      ? "g"
+      : packageInfo.weightKg !== undefined
+        ? "kg"
+        : weightUnit,
+  );
+  const packageDepth = dimensionMillimeters(
+    packageInfo.depthMm ?? packageInfo.depth ?? packageInfo.length,
+    packageInfo.depthMm !== undefined ? "mm" : dimensionUnit,
+  );
+  const packageWidth = dimensionMillimeters(
+    packageInfo.widthMm ?? packageInfo.width,
+    packageInfo.widthMm !== undefined ? "mm" : dimensionUnit,
+  );
+  const packageHeight = dimensionMillimeters(
+    packageInfo.heightMm ?? packageInfo.height,
+    packageInfo.heightMm !== undefined ? "mm" : dimensionUnit,
+  );
   [
-    ["重量", packageInfo.weight ?? packageInfo.value],
-    ["重量(g)", packageInfo.weightG],
-    ["重量(kg)", packageInfo.weightKg],
-    ["包装长", packageInfo.depth ?? packageInfo.length],
-    ["包装宽", packageInfo.width],
-    ["包装高", packageInfo.height],
-    ["尺寸单位", packageInfo.dimensionUnit],
-    ["重量单位", packageInfo.weightUnit ?? packageInfo.unit],
+    ["包装对应SKU", selectedVariant.specText ?? selectedVariant.title],
+    ["包装重量(g)", packageWeight],
+    ["商品重量(g)", packageWeight],
+    ["包装长(mm)", packageDepth],
+    ["商品长(mm)", packageDepth],
+    ["包装宽(mm)", packageWidth],
+    ["商品宽(mm)", packageWidth],
+    ["包装高(mm)", packageHeight],
+    ["尺寸单位", packageDepth || packageWidth || packageHeight ? "mm" : ""],
+    ["重量单位", packageWeight ? "g" : ""],
+    ["包装体积(cm³)", packageInfo.volumeCm3 ?? packageInfo.volume],
   ].forEach(([key, value]) => addFact(packageFacts, key, value));
 
   return {

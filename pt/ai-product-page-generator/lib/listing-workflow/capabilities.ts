@@ -63,7 +63,8 @@ async function endpointReady(endpoint: string) {
 export async function scanListingWorkflowCapabilities(): Promise<ListingWorkflowCapabilities> {
   const root = workspaceRoot();
   const crawlerDir = path.join(root, "MarketSpider-main");
-  const imageWorkshopDir = path.join(root, "pt", "image-workshop");
+  const imageWorkshopDir =
+    process.env.IMAGE_WORKSHOP_ROOT || path.join(root, "pt", "image-workshop");
   const ozonDir = path.join(root, "OZON_HD");
   const aiServiceDir = path.join(process.cwd(), "lib", "services");
   const ocrEndpoint = "http://127.0.0.1:8010";

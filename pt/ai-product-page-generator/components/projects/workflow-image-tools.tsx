@@ -76,6 +76,7 @@ type WorkflowImageFieldProps = {
 type WorkflowImageDialogProps = {
   mode: WorkflowImageDialogMode | null;
   images: ManagedWorkflowImage[];
+  selectedImageIds?: string[];
   initialImageId?: string;
   imageModelLabel: string;
   generating: boolean;
@@ -84,6 +85,7 @@ type WorkflowImageDialogProps = {
   onClose: () => void;
   onAddFiles: (files: File[]) => void | Promise<void>;
   onDelete: (imageId: string) => void;
+  onSelectionChange?: (selectedImageIds: string[]) => void;
   onReorder: (images: ManagedWorkflowImage[]) => void;
   onSetPrimary: (imageId: string) => void;
   onGenerate: (imageId: string) => void | Promise<void>;
@@ -132,6 +134,8 @@ function SortableFieldImageCard(props: {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
   };
+  const primary = props.index === 0;
+  const selected = !primary && props.selected;
 
   return (
     <div
@@ -141,21 +145,27 @@ function SortableFieldImageCard(props: {
       style={style}
       role="button"
       tabIndex={0}
-      aria-pressed={props.selected}
+      aria-pressed={primary ? undefined : selected}
       className={`group relative aspect-square min-w-0 cursor-grab overflow-hidden rounded-lg border bg-slate-50 text-left shadow-sm outline-none transition active:cursor-grabbing dark:bg-white/[0.04] ${
         sortable.isDragging
           ? "z-10 border-sky-400 opacity-80 shadow-lg ring-2 ring-sky-200"
-          : props.selected
+          : selected
             ? "border-[3px] border-blue-700 shadow-[0_0_0_4px_rgb(37_99_235_/_0.32)] ring-2 ring-blue-500/30 dark:border-blue-400 dark:shadow-[0_0_0_4px_rgb(96_165_250_/_0.32)] dark:ring-blue-400/30"
           : props.index === 0
             ? "border-emerald-400 ring-2 ring-emerald-100 dark:border-emerald-500/70 dark:ring-emerald-500/15"
             : "border-slate-200 hover:border-sky-300 dark:border-white/10"
       }`}
-      title={`${props.index === 0 ? "Ozon 主图" : `第 ${props.index + 1} 张`}，点击选择/取消选择，按住图片拖动调整顺序`}
-      aria-label={`${props.selected ? "取消选择" : "选择"} ${props.image.name}，也可按住拖动排序`}
-      onClick={() => props.onToggleSelect?.()}
+      title={primary
+        ? "Ozon 主图固定进入加工；按住图片可调整顺序"
+        : `第 ${props.index + 1} 张，点击选择/取消选择，按住图片拖动调整顺序`}
+      aria-label={primary
+        ? `主图 ${props.image.name} 固定进入加工，也可按住拖动排序`
+        : `${selected ? "取消选择" : "选择"} ${props.image.name}，也可按住拖动排序`}
+      onClick={() => {
+        if (!primary) props.onToggleSelect?.();
+      }}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (!primary && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           props.onToggleSelect?.();
         }
@@ -167,23 +177,30 @@ function SortableFieldImageCard(props: {
         draggable={false}
         className="h-full w-full select-none object-cover transition duration-200 group-hover:scale-[1.02]"
       />
-      <button
-        type="button"
-        aria-label={`${props.selected ? "取消选择图片" : "选择图片"} ${props.image.name}`}
-        title={props.selected ? "取消选择" : "选择此图"}
-        className={`absolute left-2 top-2 z-20 grid h-8 w-8 place-items-center rounded-full shadow-lg ring-2 transition ${
-          props.selected
-            ? "bg-blue-700 text-white ring-white dark:bg-blue-500 dark:ring-slate-950"
-            : "bg-white/95 text-slate-400 ring-white/80 hover:bg-blue-50 hover:text-blue-700 dark:bg-slate-900/95 dark:text-slate-400 dark:ring-slate-950 dark:hover:text-blue-300"
-        }`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onToggleSelect?.();
-        }}
-      >
-        <Check className={`h-5 w-5 stroke-[3] ${props.selected ? "opacity-100" : "opacity-55"}`} />
-      </button>
+      {!primary ? (
+        <button
+          type="button"
+          aria-label={`${selected ? "取消选择图片" : "选择图片"} ${props.image.name}`}
+          title={selected ? "取消选择" : "选择此图"}
+          className={`absolute left-2 top-2 z-20 grid h-8 w-8 place-items-center rounded-full shadow-lg ring-2 transition ${
+            selected
+              ? "bg-blue-700 text-white ring-white dark:bg-blue-500 dark:ring-slate-950"
+              : "bg-white/95 text-slate-400 ring-white/80 hover:bg-blue-50 hover:text-blue-700 dark:bg-slate-900/95 dark:text-slate-400 dark:ring-slate-950 dark:hover:text-blue-300"
+          }`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onToggleSelect?.();
+          }}
+        >
+          <Check className={`h-5 w-5 stroke-[3] ${selected ? "opacity-100" : "opacity-55"}`} />
+        </button>
+      ) : (
+        <span className="absolute left-2 top-2 z-20 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white shadow-lg ring-2 ring-white dark:ring-slate-950">
+          <Star className="h-3.5 w-3.5 fill-current" />
+          固定保留
+        </span>
+      )}
       <div ref={menuRef} className="absolute right-2 top-2 z-20">
         <button
           type="button"
@@ -271,7 +288,6 @@ function SortableFieldImageCard(props: {
 export function WorkflowImageField(props: WorkflowImageFieldProps) {
   const emptyCount = Math.max(3 - props.images.length, 0);
   const selectedIds = new Set(props.selectedImageIds ?? []);
-  const selectedCount = props.images.filter((image) => selectedIds.has(image.id)).length;
   const selectedOtherCount = props.images
     .slice(1)
     .filter((image) => selectedIds.has(image.id)).length;
@@ -293,11 +309,11 @@ export function WorkflowImageField(props: WorkflowImageFieldProps) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-white/10 dark:bg-white/[0.04]">
         <span>
-          {selectedCount
-            ? `已选中 ${selectedCount} 张；主图用于生图，选中的其他图片用于翻译。`
-            : "点击图片进行选择；主图走生图流程，只有选中的其他图片进入翻译流程。"}
+          {selectedOtherCount
+            ? `主图固定进入加工；已选择 ${selectedOtherCount} 张附图，这些附图将进入加工和翻译。`
+            : "主图固定进入加工；其余图片只有勾选后才会进入加工和翻译。"}
         </span>
-        {selectedCount ? (
+        {selectedOtherCount ? (
           <Button
             type="button"
             variant="outline"
@@ -377,6 +393,8 @@ export function WorkflowImageField(props: WorkflowImageFieldProps) {
 function SortableEditorImageTile(props: {
   image: ManagedWorkflowImage;
   index: number;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onDelete: () => void;
 }) {
   const sortable = useSortable({ id: props.image.id });
@@ -384,6 +402,8 @@ function SortableEditorImageTile(props: {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
   };
+  const primary = props.index === 0;
+  const selected = !primary && props.selected;
 
   return (
     <div
@@ -391,12 +411,36 @@ function SortableEditorImageTile(props: {
       {...sortable.attributes}
       {...sortable.listeners}
       style={style}
-      className={`group relative min-h-0 cursor-grab overflow-hidden rounded-lg border bg-slate-100 shadow-sm active:cursor-grabbing dark:bg-slate-950 ${
-        props.index === 0 ? "col-span-2 row-span-2" : ""
+      role="button"
+      tabIndex={0}
+      aria-pressed={primary ? undefined : selected}
+      aria-label={
+        primary
+          ? `主图 ${props.image.name}，固定进入主图处理`
+          : `${selected ? "取消待翻译选择" : "选择为待翻译图片"} ${props.image.name}`
+      }
+      title={
+        primary
+          ? "第一张为主图，拖动可调整顺序"
+          : "点击选择或取消待翻译；拖动可调整顺序"
+      }
+      onClick={() => {
+        if (!primary) props.onToggleSelect?.();
+      }}
+      onKeyDown={(event) => {
+        if (!primary && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          props.onToggleSelect?.();
+        }
+      }}
+      className={`group relative min-h-0 cursor-grab overflow-hidden rounded-lg border bg-slate-100 shadow-sm outline-none transition active:cursor-grabbing dark:bg-slate-950 ${
+        primary ? "col-span-2 row-span-2" : ""
       } ${
         sortable.isDragging
           ? "z-10 border-sky-400 opacity-75 shadow-lg ring-2 ring-sky-200"
-          : props.index === 0
+          : selected
+            ? "border-[4px] border-black shadow-[0_0_0_2px_rgb(0_0_0_/_0.16)] ring-2 ring-black/15 dark:border-white dark:shadow-[0_0_0_2px_rgb(255_255_255_/_0.18)] dark:ring-white/20"
+          : primary
             ? "border-emerald-400 ring-2 ring-emerald-100 dark:border-emerald-500/70 dark:ring-emerald-500/15"
             : "border-slate-200 dark:border-white/10"
       }`}
@@ -407,7 +451,7 @@ function SortableEditorImageTile(props: {
         draggable={false}
         className="h-full w-full select-none object-cover transition duration-200 group-hover:scale-[1.02]"
       />
-      {props.index === 0 ? (
+      {primary ? (
         <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow">
           <Star className="h-3 w-3 fill-current" />
           主图
@@ -417,6 +461,12 @@ function SortableEditorImageTile(props: {
           {String(props.index + 1).padStart(2, "0")}
         </span>
       )}
+      {selected ? (
+        <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black px-2 py-1 text-[10px] font-semibold text-white shadow-lg dark:bg-white dark:text-black">
+          <Check className="h-3 w-3 stroke-[3]" />
+          待翻译
+        </span>
+      ) : null}
       <button
         type="button"
         onClick={props.onDelete}
@@ -479,6 +529,7 @@ export function WorkflowImageDialog(props: WorkflowImageDialogProps) {
   const [batchTranslating, setBatchTranslating] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
   const [editorMessage, setEditorMessage] = useState("");
+  const [manageSelectedImageIds, setManageSelectedImageIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<HTMLIFrameElement | null>(null);
   const manageOriginalImagesRef = useRef<ManagedWorkflowImage[] | null>(null);
@@ -501,11 +552,16 @@ export function WorkflowImageDialog(props: WorkflowImageDialogProps) {
   useEffect(() => {
     if (props.mode === "manage" && manageOriginalImagesRef.current === null) {
       manageOriginalImagesRef.current = props.images.slice();
+      setManageSelectedImageIds(
+        (props.selectedImageIds ?? []).filter(
+          (id) => id !== props.images[0]?.id && props.images.some((image) => image.id === id),
+        ),
+      );
     }
     if (!props.mode) {
       manageOriginalImagesRef.current = null;
     }
-  }, [props.images, props.mode]);
+  }, [props.images, props.mode, props.selectedImageIds]);
 
   const cancelManageChanges = useCallback(() => {
     const originalImages = manageOriginalImagesRef.current;
@@ -517,9 +573,13 @@ export function WorkflowImageDialog(props: WorkflowImageDialogProps) {
   }, [props.onClose, props.onReorder]);
 
   const saveManageChanges = useCallback(() => {
+    const availableIds = new Set(props.images.slice(1).map((image) => image.id));
+    props.onSelectionChange?.(
+      manageSelectedImageIds.filter((id) => availableIds.has(id)),
+    );
     manageOriginalImagesRef.current = null;
     props.onClose();
-  }, [props.onClose]);
+  }, [manageSelectedImageIds, props.images, props.onClose, props.onSelectionChange]);
 
   const closeCurrentDialog = useCallback(() => {
     if (props.mode === "manage") {
@@ -672,7 +732,10 @@ export function WorkflowImageDialog(props: WorkflowImageDialogProps) {
                 <Badge variant="outline">{Math.min(props.images.length, WORKFLOW_IMAGE_LIMIT)} / {WORKFLOW_IMAGE_LIMIT}</Badge>
               </div>
               <p className="mt-1 text-sm leading-5 text-slate-500 dark:text-slate-400">
-                第一张图片作为 Ozon 主图，其余图片按当前顺序上传。
+                第一张图片作为 Ozon 主图；点击其他图片可多选待翻译图片，黑色框表示已选择。
+              </p>
+              <p className="mt-1 text-xs font-medium text-slate-700 dark:text-slate-300">
+                已选择 {manageSelectedImageIds.length} 张待翻译图片
               </p>
             </div>
             <div>
@@ -736,6 +799,14 @@ export function WorkflowImageDialog(props: WorkflowImageDialogProps) {
                           key={image.id}
                           image={image}
                           index={index}
+                          selected={manageSelectedImageIds.includes(image.id)}
+                          onToggleSelect={() =>
+                            setManageSelectedImageIds((current) =>
+                              current.includes(image.id)
+                                ? current.filter((id) => id !== image.id)
+                                : [...current, image.id],
+                            )
+                          }
                           onDelete={() => props.onDelete(image.id)}
                         />
                       ) : (

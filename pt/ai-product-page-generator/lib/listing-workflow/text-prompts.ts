@@ -36,14 +36,16 @@ export const DEFAULT_FEATURE_FILL_SYSTEM_PROMPT =
 const FEATURE_FILL_DUAL_JSON_CONTRACT = [
   "返回结构约束：一个字段必须同时出现在 displayFeatures 和 uploadFeatures 中，并使用完全相同的 attributeId；两组字段数量、attributeId 集合和顺序必须一致。",
   "displayFeatures 和 uploadFeatures 必须都是 JSON 数组，必须分别使用方括号 [] 包裹；禁止把 uploadFeatures 写成单个对象。",
-  "根 JSON 必须先输出 uploadFeatures，再输出 displayFeatures，最后才输出 notes；如果模板存在名称和简介字段（常见 attributeId 为 4180、4191），必须把它们放在 uploadFeatures 最前面，确保俄文上架名称和俄文描述完整返回。",
+  "单 SKU 时根 JSON 先输出 uploadFeatures，再输出 displayFeatures；多 SKU 时必须先完整输出 variants，再输出公共 uploadFeatures、displayFeatures 和 notes，避免回答截断时丢失 SKU。",
   "为避免回答截断，uploadFeatures 每项只返回 attributeId、value 和有依据时的 dictionary_value_id；不要返回 confidence、status、source、reason。使用紧凑 JSON，不要为了说明原因占用输出长度。",
   "displayFeatures 面向中文用户：keyZh 使用字段中文名，valueZh 使用准确、简洁的中文值。",
   "uploadFeatures 面向 Ozon 上架：有 allowedValues 时，value 必须精确复制某个 allowedValues.value；同时复制对应 dictionary_value_id。没有允许值可选时省略该字段，并在 notes 说明。",
   "没有 allowedValues 的自由文本字段，uploadFeatures.value 使用适合 Ozon 商品卡的俄文；不得把中文展示值直接当作俄文上架值。",
   "图片由程序单独处理；不要返回视频、PDF、富媒体链接或其他媒体字段。",
   "返回所有在商品事实中有明确依据的字段，不限制字段数量。不要使用 Markdown，不要解释，不要在最后一项后加逗号。",
-  '只返回一个严格根 JSON，根内包含两段：{"uploadFeatures":[{"attributeId":"同一个Ozon属性ID","value":"Ozon标准俄文值","dictionary_value_id":123}],"displayFeatures":[{"attributeId":"Ozon属性ID","keyZh":"中文字段名","valueZh":"中文值"}],"notes":["人工注意事项"]}。',
+  "当 productFacts.variants 含有多个 SKU 时，公共字段仍放在根级 uploadFeatures/displayFeatures；颜色、尺寸、型号、包装数量等 SKU 差异字段放入 variants，并原样返回每个 skuId。",
+  "variants 中每个 SKU 都必须包含 specLine，格式固定为“字段=值｜字段=值”，使用全角分隔符｜；SKU 数量和 skuId 集合必须与输入完全一致，不得按相似规格合并。",
+  '多 SKU 时只返回一个严格根 JSON，并把 variants 放在第一个键：{"variants":[{"skuId":"输入中的原始skuId","specLine":"颜色=蓝色｜尺寸=大号","uploadFeatures":[{"attributeId":"Ozon属性ID","value":"Ozon标准俄文值","dictionary_value_id":123}],"displayFeatures":[{"attributeId":"同一个Ozon属性ID","keyZh":"中文字段名","valueZh":"中文值"}]}],"uploadFeatures":[{"attributeId":"同一个Ozon属性ID","value":"Ozon标准俄文值","dictionary_value_id":123}],"displayFeatures":[{"attributeId":"Ozon属性ID","keyZh":"中文字段名","valueZh":"中文值"}],"notes":["人工注意事项"]}。',
 ];
 
 export const DEFAULT_FEATURE_FILL_TASK_PROMPT = [
@@ -65,16 +67,16 @@ export function ensureFeatureFillDualJsonContract(value: string) {
         .filter(Boolean)
         .join("\n");
   return withDualContract.includes("必须都是 JSON 数组")
-    ? withDualContract.includes("必须先输出 uploadFeatures")
+    ? withDualContract.includes("多 SKU 时必须先完整输出 variants")
       ? withDualContract
       : [
           withDualContract,
-          "根 JSON 必须先输出 uploadFeatures，再输出 displayFeatures，最后才输出 notes；名称和简介字段（常见 attributeId 4180、4191）必须放在 uploadFeatures 最前面。为避免截断，uploadFeatures 每项只返回 attributeId、value 和有依据时的 dictionary_value_id，不要返回 confidence、status、source、reason。",
+          "单 SKU 时根 JSON 先输出 uploadFeatures、displayFeatures；多 SKU 时必须先完整输出 variants，再输出公共 uploadFeatures、displayFeatures 和 notes。名称和简介字段（常见 attributeId 4180、4191）放在公共 uploadFeatures 最前面。为避免截断，每项只返回必要字段。",
         ].join("\n")
     : [
         withDualContract,
         "displayFeatures 和 uploadFeatures 必须都是 JSON 数组，必须分别使用方括号 [] 包裹；禁止把 uploadFeatures 写成单个对象。",
-        "根 JSON 必须先输出 uploadFeatures，再输出 displayFeatures，最后才输出 notes；名称和简介字段（常见 attributeId 4180、4191）必须放在 uploadFeatures 最前面。为避免截断，uploadFeatures 每项只返回 attributeId、value 和有依据时的 dictionary_value_id，不要返回 confidence、status、source、reason。",
+        "单 SKU 时根 JSON 先输出 uploadFeatures、displayFeatures；多 SKU 时必须先完整输出 variants，再输出公共 uploadFeatures、displayFeatures 和 notes。名称和简介字段（常见 attributeId 4180、4191）放在公共 uploadFeatures 最前面。为避免截断，每项只返回必要字段。",
       ].join("\n");
 }
 

@@ -2,6 +2,8 @@ import { spawn } from "child_process";
 import { access } from "fs/promises";
 import path from "path";
 
+import { sanitizeCollectedProductJson } from "@/lib/listing-workflow/ai-product-json";
+
 export type ProductCollectResult = {
   platform: "1688" | "taobao" | "jd";
   sourceUrl: string;
@@ -50,7 +52,10 @@ function parseJsonOutput(stdout: string): ProductCollectResult {
   if (!parsed.scrapedData || typeof parsed.scrapedData !== "object") {
     throw new Error("采集脚本返回的数据缺少 scrapedData。");
   }
-  return parsed;
+  return {
+    ...parsed,
+    scrapedData: sanitizeCollectedProductJson(parsed.scrapedData),
+  };
 }
 
 export async function collectProductFromUrl(url: string, signal?: AbortSignal): Promise<ProductCollectResult> {

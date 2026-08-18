@@ -61,7 +61,10 @@ import {
   type ListingWorkflowStage,
 } from "@/lib/listing-workflow/items";
 import {
-  applySkuSelectionToJson,
+  LISTING_QUICK_MODE_MODEL_ID,
+  LISTING_QUICK_MODE_PROVIDER_ID,
+} from "@/lib/listing-workflow/quick-mode";
+import {
   extractProductSkuOptions,
   type ProductSkuOption,
 } from "@/lib/listing-workflow/skus";
@@ -1572,33 +1575,18 @@ function AiReturnedFeaturesPanel({
 
 function SkuSelectionPanel({
   options,
-  mode,
-  selectedSkuId,
   aiVariants,
-  processing,
-  applied,
-  canMatchWithoutSku,
-  onModeChange,
-  onSelectedSkuChange,
-  onApply,
+  selectedSkuIds,
+  onSelectedSkuIdsChange,
 }: {
   options: ProductSkuOption[];
-  mode: "single" | "all";
-  selectedSkuId: string;
   aiVariants: OzonAiVariantMapping[];
-  processing: boolean;
-  applied: boolean;
-  canMatchWithoutSku: boolean;
-  onModeChange: (mode: "single" | "all") => void;
-  onSelectedSkuChange: (skuId: string) => void;
-  onApply: () => void;
+  selectedSkuIds: string[];
+  onSelectedSkuIdsChange: (skuIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const source = options[0]?.source ?? null;
-  const visibleOptions =
-    mode === "all"
-      ? options
-      : options.filter((option) => option.id === selectedSkuId).slice(0, 1);
+  const validIds = new Set(options.map((option) => option.id));
+  const selectedIds = selectedSkuIds.filter((id) => validIds.has(id));
 
   return (
     <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-500/20 dark:bg-sky-500/[0.06]">
@@ -1609,29 +1597,11 @@ function SkuSelectionPanel({
         className="flex w-full flex-wrap items-start justify-between gap-3 text-left"
       >
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-slate-950 dark:text-white">
-              多 SKU 选择
-            </p>
-            <Badge variant="outline">{options.length} 个</Badge>
-            {source ? (
-              <Badge variant={source === "1688" ? "success" : "warning"}>
-                {source === "1688" ? "1688 抓取" : "AI 返回"}
-              </Badge>
-            ) : null}
-            {aiVariants.length ? (
-              <Badge variant="success">AI 返回 {aiVariants.length} 个名称</Badge>
-            ) : null}
-            <Badge variant={applied ? "success" : "warning"}>
-              {applied
-                ? source === "1688" || (!source && canMatchWithoutSku)
-                  ? "已匹配"
-                  : "已应用"
-                : "等待确认"}
-            </Badge>
-          </div>
+          <p className="text-sm font-semibold text-slate-950 dark:text-white">
+            SKU 选择
+          </p>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            商品描述和公共特征复用；名称、价格、图片及规格按 SKU 分开。
+            直接勾选本次需要加工的 SKU。
           </p>
         </div>
         <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -1641,173 +1611,56 @@ function SkuSelectionPanel({
         <div className="mt-4 space-y-4">
           {!options.length ? (
             <div className="rounded-xl border border-dashed border-sky-200 bg-white/70 p-6 text-center text-sm leading-6 text-slate-500 dark:border-sky-500/20 dark:bg-black/10 dark:text-slate-400">
-              <p>
-                {canMatchWithoutSku
-                  ? "当前商品没有识别到独立 SKU，可直接匹配整个商品。"
-                  : "采集到 1688 规格或 AI 返回多个商品后，这里会列出每个具体 SKU，并支持选择单个或全部。"}
-              </p>
-              {canMatchWithoutSku ? (
-                <Button
-                  type="button"
-                  onClick={onApply}
-                  disabled={processing}
-                  className="mt-3 gap-2"
-                >
-                  {processing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-4 w-4" />
-                  )}
-                  {processing ? "AI 正在匹配" : "匹配"}
-                </Button>
-              ) : null}
+              当前商品按整件商品加工。
             </div>
           ) : (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={mode === "single" ? "default" : "outline"}
-                  onClick={() => onModeChange("single")}
-                >
-                  选择单个 SKU
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={mode === "all" ? "default" : "outline"}
-                  onClick={() => onModeChange("all")}
-                >
-                  选择全部 SKU
-                </Button>
-              </div>
-
-              {mode === "single" ? (
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                    当前 SKU
-                  </span>
-                  <select
-                    value={selectedSkuId}
-                    onChange={(event) =>
-                      onSelectedSkuChange(event.target.value)
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-white/10 dark:bg-slate-950 dark:text-white"
-                  >
-                    {options.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.specText} / ¥{option.price || "-"} / 库存{" "}
-                        {option.stock ?? "-"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-
-              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                {visibleOptions.slice(0, 12).map((option, index) => {
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {options.map((option, index) => {
                   const aiVariant = findAiVariantForSku(
                     option,
                     aiVariants,
                     index,
                   );
+                  const checked = selectedIds.includes(option.id);
                   return (
-                    <div
+                    <label
                       key={option.id}
-                      className="min-w-0 rounded-xl border border-sky-100 bg-white p-3 dark:border-sky-500/10 dark:bg-black/20"
+                      className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-xl border p-3 transition ${
+                        checked
+                          ? "border-sky-400 bg-sky-100/70 dark:border-sky-400 dark:bg-sky-500/15"
+                          : "border-sky-100 bg-white dark:border-sky-500/10 dark:bg-black/20"
+                      }`}
                     >
-                      <p className="break-words text-xs font-semibold leading-5 text-slate-900 dark:text-white">
-                        {option.specText}
-                      </p>
-                      <p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">
-                        SKU {option.id} / ¥{option.price || "-"} / 库存{" "}
-                        {option.stock ?? "-"}
-                      </p>
-                      {Object.keys(option.specs).length ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {Object.entries(option.specs).map(([key, value]) => (
-                            <span
-                              key={`${option.id}:${key}`}
-                              className="rounded-full border border-sky-100 bg-sky-50 px-2 py-1 text-[11px] text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200"
-                            >
-                              {key}: {value}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {aiVariant?.name ? (
-                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-emerald-700 dark:text-emerald-300">
-                          AI 名称：{aiVariant.name}
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          onSelectedSkuIdsChange(
+                            checked
+                              ? selectedIds.filter((id) => id !== option.id)
+                              : [...selectedIds, option.id],
+                          )
+                        }
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-sky-600"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words text-xs font-semibold leading-5 text-slate-900 dark:text-white">
+                          {option.specText}
                         </p>
-                      ) : null}
-                      {aiVariant?.attributes.length ? (
-                        <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-[11px] leading-4 text-slate-500 dark:border-white/10 dark:text-slate-400">
-                          {aiVariant.attributes
-                            .slice(0, 4)
-                            .map((attribute) => (
-                              <p
-                                key={`${aiVariant.skuKey}:${attribute.attributeId}`}
-                                className="truncate"
-                              >
-                                {attribute.jsonKey || attribute.label}:{" "}
-                                {attribute.value}
-                              </p>
-                            ))}
-                          {aiVariant.attributes.length > 4 ? (
-                            <details className="pt-1">
-                              <summary className="cursor-pointer font-medium text-sky-700 dark:text-sky-300">
-                                查看全部 {aiVariant.attributes.length} 个字段
-                              </summary>
-                              <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 dark:bg-white/[0.04]">
-                                {aiVariant.attributes.map((attribute) => (
-                                  <p
-                                    key={`${aiVariant.skuKey}:all:${attribute.attributeId}`}
-                                    className="break-words"
-                                  >
-                                    {attribute.jsonKey || attribute.label}:{" "}
-                                    {attribute.value}
-                                  </p>
-                                ))}
-                              </div>
-                            </details>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
+                        <p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">
+                          SKU {option.id} / ¥{option.price || "-"} / 库存{" "}
+                          {option.stock ?? "-"}
+                        </p>
+                        {aiVariant?.name ? (
+                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-emerald-700 dark:text-emerald-300">
+                            AI 名称：{aiVariant.name}
+                          </p>
+                        ) : null}
+                      </div>
+                    </label>
                   );
                 })}
               </div>
-              {visibleOptions.length > 12 ? (
-                <p className="text-xs text-slate-500">
-                  其余 {visibleOptions.length - 12} 个 SKU 将一并处理。
-                </p>
-              ) : null}
-
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  onClick={onApply}
-                  disabled={
-                    processing || (mode === "single" && !selectedSkuId)
-                  }
-                  className="gap-2"
-                >
-                  {processing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : source === "1688" ? (
-                    <Sparkles className="h-4 w-4" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
-                  {processing
-                    ? "AI 正在匹配"
-                    : source === "1688"
-                      ? "匹配"
-                      : "应用 SKU 选择"}
-                </Button>
-              </div>
-            </>
           )}
         </div>
       ) : null}
@@ -2345,9 +2198,7 @@ export function ListingWorkflowPanel() {
   const [textPromptResponseLoading, setTextPromptResponseLoading] = useState(false);
   const [textPromptResponseOpen, setTextPromptResponseOpen] = useState(false);
   const [featureDetail, setFeatureDetail] = useState<ListingFeatureDraft | null>(null);
-  const [skuMode, setSkuMode] = useState<"single" | "all">("single");
-  const [selectedSkuId, setSelectedSkuId] = useState("");
-  const [skuSelectionApplied, setSkuSelectionApplied] = useState(false);
+  const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
   const [aiSkuVariants, setAiSkuVariants] = useState<OzonAiVariantMapping[]>([]);
   const [imageAspectRatio, setImageAspectRatio] = useState<ListingImageAspectRatio>("1:1");
   const [imageUseReference, setImageUseReference] = useState(true);
@@ -2366,7 +2217,15 @@ export function ListingWorkflowPanel() {
   const platform = useMemo(() => detectPlatform(sourceUrl), [sourceUrl]);
   const parsedJson = useMemo(() => safeParseJson(jsonText), [jsonText]);
   const jsonValid = jsonText.trim().length > 0 && parsedJson !== null;
-  const featureModelChoices = useMemo(() => collectModelChoices(providers, isFeatureModel), [providers]);
+  const featureModelChoices = useMemo(
+    () =>
+      collectModelChoices(providers, isFeatureModel).filter(
+        (model) =>
+          model.providerId === LISTING_QUICK_MODE_PROVIDER_ID &&
+          model.modelId === LISTING_QUICK_MODE_MODEL_ID,
+      ),
+    [providers],
+  );
   const imageModelChoices = useMemo(() => collectModelChoices(providers, isImageGenerationModel), [providers]);
   const selectedFeatureModel = useMemo(
     () => featureModelChoices.find((model) => model.providerId === featureProviderId && model.modelId === featureModelId) ?? null,
@@ -2500,19 +2359,14 @@ export function ListingWorkflowPanel() {
   }, [managedImages]);
 
   useEffect(() => {
-    setSkuSelectionApplied(false);
     setAiSkuVariants([]);
   }, [skuOptions.map((option) => option.id).join("|")]);
 
   useEffect(() => {
-    const firstSkuId = displayedSkuOptions[0]?.id ?? "";
-    setSelectedSkuId((current) =>
-      current &&
-      displayedSkuOptions.some((option) => option.id === current)
-        ? current
-        : firstSkuId,
+    const availableIds = new Set(displayedSkuOptions.map((option) => option.id));
+    setSelectedSkuIds((current) =>
+      current.filter((id) => availableIds.has(id)),
     );
-    setSkuSelectionApplied(false);
   }, [displayedSkuOptions.map((option) => option.id).join("|")]);
 
   useEffect(() => {
@@ -2998,9 +2852,18 @@ export function ListingWorkflowPanel() {
     }
   }
 
-  function saveStageAiPrompts(nextPrompts: ListingStageAiPromptConfig) {
+  async function saveStageAiPrompts(
+    nextPrompts: ListingStageAiPromptConfig,
+  ) {
     const prompts = normalizeListingStageAiPrompts(nextPrompts);
     try {
+      await readApi<{ stageAiPrompts: ListingStageAiPromptConfig }>(
+        await fetch("/api/listing-workflow/preferences", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stageAiPrompts: prompts }),
+        }),
+      );
       window.localStorage.setItem(
         LISTING_STAGE_AI_PROMPT_STORAGE_KEY,
         JSON.stringify(prompts),
@@ -3011,7 +2874,7 @@ export function ListingWorkflowPanel() {
       setImageUseReference(prompts.imageGeneration.useReference);
       setImagePromptTouched(true);
       setStagePromptDialogOpen(false);
-      toast.success("AI 提示词已保存");
+      toast.success("AI 提示词已保存，并同步到采集与生产环节");
     } catch {
       toast.error("AI 提示词保存失败");
     }
@@ -3066,14 +2929,12 @@ export function ListingWorkflowPanel() {
     scrapedData: Record<string, unknown>,
   ) {
     if (!selectedFeatureModel) {
-      toast.error("请先选择用于两阶段匹配的文本模型");
+      toast.error("请先选择用于快速模式的浏览器文本模型");
       return false;
     }
-    const promptConfig = normalizeListingStageAiPrompts(stageAiPrompts);
 
     const runId = textPromptRunRef.current + 1;
     textPromptRunRef.current = runId;
-    setSkuSelectionApplied(false);
     setTextPromptResponse(null);
     setTextPromptResponseError(null);
     setTextPromptResponseLoading(true);
@@ -3082,7 +2943,7 @@ export function ListingWorkflowPanel() {
     try {
       window.localStorage.removeItem(textPromptResponseStorageKey);
     } catch {
-      // 本地存储不可用时不影响两阶段匹配。
+      // 本地存储不可用时不影响快速模式。
     }
 
     try {
@@ -3092,94 +2953,48 @@ export function ListingWorkflowPanel() {
           status: "AI_RUNNING",
         });
       }
-      setBusyAction("category-match");
-      const categoryResult = await readApi<CategoryMatchResponse>(
-        await fetch("/api/listing-workflow/category-match", {
+      setBusyAction("features");
+      const quickResult = await readApi<FeatureDraftResponse>(
+        await fetch("/api/listing-workflow/quick-match", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             scrapedData,
-            providerId: selectedFeatureModel.providerId,
-            model: selectedFeatureModel.modelId,
-            customPrompt: promptConfig.categoryMatch.taskPrompt,
-            systemPrompt: promptConfig.categoryMatch.systemPrompt,
+            providerId: LISTING_QUICK_MODE_PROVIDER_ID,
+            model: LISTING_QUICK_MODE_MODEL_ID,
           }),
         }),
       );
       if (textPromptRunRef.current !== runId) return false;
 
-      setCategoryMatchOk(categoryResult.aiStatus.ok);
-      setCategoryMatchMessage(categoryResult.aiStatus.message);
-      setCategoryMatchReason(categoryResult.reason);
-      setCategoryMatchConfidence(categoryResult.confidence);
-      if (!categoryResult.category) {
-        setTextPromptResponseError(categoryResult.aiStatus.message);
+      setCategoryMatchOk(Boolean(quickResult.category));
+      setCategoryMatchMessage(quickResult.aiStatus.message);
+      setCategoryMatchReason("China Product to Ozon 快速模式一次返回类目和特征");
+      setCategoryMatchConfidence(quickResult.category ? 0.94 : 0);
+      if (!quickResult.category) {
+        setTextPromptResponseError(quickResult.aiStatus.message);
         if (workflowItemId) {
           void patchWorkflowItem(workflowItemId, {
             status: "AI_FAILED",
           }).catch(() => undefined);
         }
-        toast.warning(categoryResult.aiStatus.message);
+        toast.warning(quickResult.aiStatus.message);
         return false;
       }
 
       const categorySnapshot = await loadOzonSnapshot(
-        categoryResult.category.id,
+        quickResult.category.id,
         { preserveFeatureDraft: true, matchSource: "ai" },
       );
-      const syncedSnapshot = await syncSelectedCategoryAttributes(
-        categoryResult.category.id,
-        categorySnapshot,
-        true,
-      );
-      const attributeCount =
-        syncedSnapshot?.selectedCategory?.attributes?.length ?? 0;
-      if (!attributeCount) {
-        const message =
-          "类目已经匹配，但没有读取到该类目的 Ozon 特征，第二阶段已停止。";
-        setTextPromptResponseError(message);
-        if (workflowItemId) {
-          void patchWorkflowItem(workflowItemId, {
-            status: "AI_FAILED",
-            categoryId: categoryResult.category.id,
-            categoryLabel: categoryResult.category.label,
-            categoryPath: categoryResult.category.path,
-          }).catch(() => undefined);
-        }
-        toast.error(message);
-        return false;
-      }
-
-      setCategoryMatchMessage(
-        `${categoryResult.aiStatus.message} 第一阶段已把 ${categoryResult.promptAudit.rawBytes} 字节原始 JSON 清洗为 ${categoryResult.promptAudit.preparedBytes} 字节商品事实，移除 ${categoryResult.promptAudit.removedImageReferenceCount} 个图片引用和 ${categoryResult.promptAudit.removedUrlCount} 个链接；已读取 ${attributeCount} 个类目特征，开始第二阶段填写。`,
-      );
-      setBusyAction("features");
-      const featureResult = await readApi<FeatureDraftResponse>(
-        await fetch("/api/listing-workflow/feature-draft", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scrapedData,
-            preparedProduct: categoryResult.preparedProduct,
-            categoryId: categoryResult.category.id,
-            providerId: selectedFeatureModel.providerId,
-            model: selectedFeatureModel.modelId,
-            customPrompt: promptConfig.featureFill.taskPrompt,
-            systemPrompt: promptConfig.featureFill.systemPrompt,
-          }),
-        }),
-      );
-      if (textPromptRunRef.current !== runId) return false;
-
       const mergedDraft = mergeStageTwoFeatureDraft(
         featureDraft,
-        featureResult.features,
+        quickResult.features,
       );
-      const uploadReadyDraft = featureResult.aiResponse?.ozonMapping
+      const uploadReadyDraft = quickResult.aiResponse?.ozonMapping
         ? mergeOzonAiMappingIntoDraft(
             mergedDraft,
-            featureResult.aiResponse.ozonMapping,
-            syncedSnapshot ?? categorySnapshot,
+            quickResult.aiResponse.ozonMapping,
+            categorySnapshot,
           )
         : mergedDraft;
       const completedDraft = applyWorkflowImageOrder(
@@ -3187,19 +3002,19 @@ export function ListingWorkflowPanel() {
         managedImages,
       );
       setFeatureDraft(completedDraft);
-      setFeatureNotes(featureResult.notes ?? []);
-      setFeatureStatusOk(featureResult.aiStatus.ok);
-      setFeatureStatusMessage(featureResult.aiStatus.message);
+      setFeatureNotes(quickResult.notes ?? []);
+      setFeatureStatusOk(quickResult.aiStatus.ok);
+      setFeatureStatusMessage(quickResult.aiStatus.message);
 
-      if (featureResult.aiResponse) {
-        setTextPromptResponse(featureResult.aiResponse);
+      if (quickResult.aiResponse) {
+        setTextPromptResponse(quickResult.aiResponse);
         setAiSkuVariants(
-          featureResult.aiResponse.ozonMapping?.variants ?? [],
+          quickResult.aiResponse.ozonMapping?.variants ?? [],
         );
         try {
           window.localStorage.setItem(
             textPromptResponseStorageKey,
-            JSON.stringify(featureResult.aiResponse),
+            JSON.stringify(quickResult.aiResponse),
           );
         } catch {
           // 回复过长或本地存储不可用时，当前页面仍正常展示。
@@ -3209,21 +3024,12 @@ export function ListingWorkflowPanel() {
       const recordPatch = {
         ...workflowItemPayload(scrapedData, completedDraft, {
           stage: recordStage,
-          status: featureResult.aiStatus.ok ? "MATCHED" : "AI_FAILED",
-          categoryId: categoryResult.category.id,
-          categoryLabel: categoryResult.category.label,
-          categoryPath: categoryResult.category.path,
-          aiResponse: {
-            ...(featureResult.aiResponse ?? {}),
-            categoryMatch: {
-              aiDecision: categoryResult.aiDecision ?? null,
-              categoryCorrection:
-                categoryResult.categoryCorrection ?? null,
-              confidence: categoryResult.confidence,
-              reason: categoryResult.reason,
-            },
-          },
-          notes: featureResult.notes ?? [],
+          status: quickResult.aiStatus.ok ? "MATCHED" : "AI_FAILED",
+          categoryId: quickResult.category.id,
+          categoryLabel: quickResult.category.label,
+          categoryPath: quickResult.category.path,
+          aiResponse: quickResult.aiResponse ?? {},
+          notes: quickResult.notes ?? [],
         }),
       };
       if (workflowItemId) {
@@ -3242,18 +3048,16 @@ export function ListingWorkflowPanel() {
         router.replace(`/projects/new?item=${createdItem.id}`);
       }
 
-      if (featureResult.aiStatus.ok) {
-        toast.success(
-          `两阶段匹配完成：类目 1 次请求，${attributeCount} 个特征 1 次请求`,
-        );
+      if (quickResult.aiStatus.ok) {
+        toast.success("快速模式完成：一次请求已返回类目和特征");
         return true;
       }
-      toast.warning(featureResult.aiStatus.message);
+      toast.warning(quickResult.aiStatus.message);
       return false;
     } catch (error) {
       if (textPromptRunRef.current !== runId) return false;
       const message =
-        error instanceof Error ? error.message : "两阶段 AI 匹配失败";
+        error instanceof Error ? error.message : "快速模式处理失败";
       setTextPromptResponseError(message);
       if (workflowItemId) {
         void patchWorkflowItem(workflowItemId, {
@@ -3271,55 +3075,7 @@ export function ListingWorkflowPanel() {
     }
   }
 
-  async function applySelectedSkusAndRunAi() {
-    if (!skuOptions.length && aiSkuVariants.length) {
-      const fallbackSkuId =
-        selectedSkuId || displayedSkuOptions[0]?.id || "";
-      if (skuMode === "single" && !fallbackSkuId) {
-        toast.error("请选择一个 SKU");
-        return;
-      }
-      setSkuSelectionApplied(true);
-      toast.success(
-        skuMode === "all"
-          ? `已选择全部 ${displayedSkuOptions.length} 个 AI SKU`
-          : `已选择 SKU：${fallbackSkuId}`,
-      );
-      return;
-    }
-    if (!parsedJson) {
-      toast.error("请先采集或粘贴商品 JSON");
-      return;
-    }
-    let selectedData = parsedJson;
-    if (skuOptions.length) {
-      const fallbackSkuId = selectedSkuId || skuOptions[0]?.id || "";
-      if (skuMode === "single" && !fallbackSkuId) {
-        toast.error("请选择一个 SKU");
-        return;
-      }
-      selectedData = applySkuSelectionToJson(
-        parsedJson,
-        skuMode,
-        fallbackSkuId,
-      );
-    }
-    setSkuSelectionApplied(false);
-    await hydrateBaseFeaturesFromJson(selectedData, {
-      preserveExisting: true,
-    });
-    const success = await runTwoStageAiWorkflow(selectedData);
-    if (success) {
-      setSkuSelectionApplied(true);
-    }
-  }
-
   async function collectProduct() {
-    if (!selectedFeatureModel) {
-      toast.error("请先选择“特征填写 AI”模型，采集完成后会立即匹配类目");
-      return;
-    }
-    const featureModel = selectedFeatureModel;
     const controller = new AbortController();
     collectAbortRef.current = controller;
     setBusyAction("collect");
@@ -3347,112 +3103,51 @@ export function ListingWorkflowPanel() {
       setLaunchResult({
         url: null,
         action: "collect",
-        message: `${result.platform} 商品已采集成 JSON，已进入后续 Ozon 特征匹配流程。`,
+        message: `${result.platform} 商品已采集成 JSON，请在采集阶段选择主图、待翻译图片和 SKU。`,
         time: new Date().toLocaleTimeString(),
       });
       toast.success("采集完成，JSON 已填入");
-      const promptConfig = normalizeListingStageAiPrompts(stageAiPrompts);
-      const categoryMatchPromise = fetch("/api/listing-workflow/category-match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scrapedData: result.scrapedData,
-            providerId: featureModel.providerId,
-            model: featureModel.modelId,
-            customPrompt: promptConfig.categoryMatch.taskPrompt,
-            systemPrompt: promptConfig.categoryMatch.systemPrompt,
-          }),
-          signal: controller.signal,
-        }).then((response) => readApi<CategoryMatchResponse>(response));
-      toast("商品采集完成，AI 类目匹配已发送");
-      const [hydratedFeatures, categoryOutcome] = await Promise.all([
-        hydrateBaseFeaturesFromJson(result.scrapedData),
-        categoryMatchPromise.then(
-          (value) => ({ value, error: null }),
-          (error: unknown) => ({ value: null, error }),
-        ),
-        refresh(""),
-      ]).then(([features, category]) => [features, category] as const);
+      await refresh("");
       if (controller.signal.aborted) {
         throw new DOMException("采集已暂停", "AbortError");
       }
       const collectedImages = buildCollectedManagedImages(result.scrapedData);
-      const collectedScrapedData = {
-        ...result.scrapedData,
-        workflowImages: {
-          items: collectedImages,
-          selectedImageIds: [],
-          selectedImageUrls: [],
-          primaryImageUrl: collectedImages[0]?.url || "",
-          updatedAt: new Date().toISOString(),
-        },
-      };
       const collectedFeatures = applyWorkflowImageOrder(
-        hydratedFeatures.length
-          ? hydratedFeatures
-          : buildFallbackCollectedFeatures(result.scrapedData),
+        buildFallbackCollectedFeatures(result.scrapedData),
         collectedImages,
       );
       setFeatureDraft(collectedFeatures);
-      const categoryResult = categoryOutcome.value;
-      const matchedCategory = categoryResult?.category ?? null;
-      const categoryErrorMessage = categoryOutcome.error
-        ? categoryOutcome.error instanceof Error
-          ? categoryOutcome.error.message
-          : "AI 类目匹配失败"
-        : categoryResult?.aiStatus.message || "AI 没有返回类目结果";
-      if (categoryResult) {
-        setCategoryMatchOk(Boolean(matchedCategory));
-        setCategoryMatchMessage(categoryResult.aiStatus.message);
-        setCategoryMatchReason(categoryResult.reason);
-        setCategoryMatchConfidence(categoryResult.confidence);
-      }
+      clearMatchedCategory();
+      setFeatureStatusOk(false);
+      setFeatureStatusMessage("请先选择主图、待翻译图片和 SKU；开始加工后运行 AI 属性填写。");
+      setFeatureNotes([]);
       const collectedItem = await createWorkflowItem(
-        collectedScrapedData,
+        result.scrapedData,
         collectedFeatures,
         {
           stage: "COLLECTED",
-          status: matchedCategory ? "PENDING_AI" : "AI_FAILED",
+          status: "PENDING_AI",
           imageUrl: firstWorkflowImage(result.scrapedData) || null,
-          categoryId: matchedCategory?.id ?? null,
-          categoryLabel: matchedCategory?.label ?? null,
-          categoryPath: matchedCategory?.path ?? null,
-          aiResponse: matchedCategory
-            ? {
-                categoryMatch: {
-                  providerId: featureModel.providerId,
-                  model: featureModel.modelId,
-                  preparedProduct: categoryResult?.preparedProduct ?? {},
-                  aiDecision: categoryResult?.aiDecision ?? null,
-                  categoryCorrection:
-                    categoryResult?.categoryCorrection ?? null,
-                  confidence: categoryResult?.confidence ?? 0,
-                  reason: categoryResult?.reason ?? "",
-                },
-              }
-            : {
-                categoryMatch: {
-                  providerId: featureModel.providerId,
-                  model: featureModel.modelId,
-                  error: categoryErrorMessage,
-                },
-              },
-          notes: matchedCategory ? [] : [categoryErrorMessage],
+          categoryId: null,
+          categoryLabel: null,
+          categoryPath: null,
+          aiResponse: {
+            quickMode: {
+              status: "pending",
+            },
+          },
+          notes: [
+            "商品已进入采集阶段；请先选择主图、待翻译图片和 SKU，开始加工后再发送 AI。",
+          ],
         },
       );
       setWorkflowItemId(collectedItem.id);
       setWorkflowItemStage(collectedItem.stage);
       loadedWorkflowItemRef.current = collectedItem.id;
       rememberActiveWorkflowItem(collectedItem.id);
-      if (matchedCategory) {
-        toast.success(`商品卡已保存，类目已匹配：${matchedCategory.label}`);
-      } else {
-        toast.warning(`商品卡已保存，类目匹配提醒：${categoryErrorMessage}`);
-      }
+      toast.success("商品卡已保存到采集阶段，AI 将在开始加工后运行");
       const collectedSkus = extractProductSkuOptions(result.scrapedData);
-      setSkuMode("single");
-      setSelectedSkuId(collectedSkus[0]?.id ?? "");
-      setSkuSelectionApplied(false);
+      setSelectedSkuIds([]);
       setAiSkuVariants([]);
       if (collectedSkus.length > 1) {
         toast.info(
@@ -3787,19 +3482,46 @@ export function ListingWorkflowPanel() {
       if (storedSystemPrompt) {
         setTextSystemPrompt(storedSystemPrompt);
       }
-      const storedStagePrompts = window.localStorage.getItem(
-        LISTING_STAGE_AI_PROMPT_STORAGE_KEY,
-      );
-      if (storedStagePrompts) {
-        const restoredPrompts = normalizeListingStageAiPrompts(
-          JSON.parse(storedStagePrompts),
-        );
-        setStageAiPrompts(restoredPrompts);
-        setImagePrompt(restoredPrompts.imageGeneration.prompt);
-        setImageAspectRatio(restoredPrompts.imageGeneration.aspectRatio);
-        setImageUseReference(restoredPrompts.imageGeneration.useReference);
-        setImagePromptTouched(true);
-      }
+      // 服务端保存的是全局工作流提示词。主页打开时先读取服务端最新值，
+      // 避免旧标签页的 localStorage 反向覆盖刚保存的图片提示词。
+      void fetch("/api/listing-workflow/preferences", {
+        cache: "no-store",
+      })
+        .then((response) =>
+          readApi<{ stageAiPrompts: ListingStageAiPromptConfig }>(
+            response,
+          ),
+        )
+        .then((preferences) => {
+          const restoredPrompts = normalizeListingStageAiPrompts(
+            preferences.stageAiPrompts,
+          );
+          setStageAiPrompts(restoredPrompts);
+          setImagePrompt(restoredPrompts.imageGeneration.prompt);
+          setImageAspectRatio(restoredPrompts.imageGeneration.aspectRatio);
+          setImageUseReference(
+            restoredPrompts.imageGeneration.useReference,
+          );
+          setImagePromptTouched(true);
+          window.localStorage.setItem(
+            LISTING_STAGE_AI_PROMPT_STORAGE_KEY,
+            JSON.stringify(restoredPrompts),
+          );
+        })
+        .catch(() => {
+          const storedStagePrompts = window.localStorage.getItem(
+            LISTING_STAGE_AI_PROMPT_STORAGE_KEY,
+          );
+          if (!storedStagePrompts) return;
+          const restoredPrompts = normalizeListingStageAiPrompts(
+            JSON.parse(storedStagePrompts),
+          );
+          setStageAiPrompts(restoredPrompts);
+          setImagePrompt(restoredPrompts.imageGeneration.prompt);
+          setImageAspectRatio(restoredPrompts.imageGeneration.aspectRatio);
+          setImageUseReference(restoredPrompts.imageGeneration.useReference);
+          setImagePromptTouched(true);
+        });
       const storedFeatureModel = parseListingModelSelection(
         window.localStorage.getItem(LISTING_FEATURE_MODEL_STORAGE_KEY),
       );
@@ -3846,32 +3568,44 @@ export function ListingWorkflowPanel() {
 
   useEffect(() => {
     if (!selectedFeatureModel) return;
+    const featureModel = {
+      providerId: selectedFeatureModel.providerId,
+      modelId: selectedFeatureModel.modelId,
+    };
     try {
       window.localStorage.setItem(
         LISTING_FEATURE_MODEL_STORAGE_KEY,
-        JSON.stringify({
-          providerId: selectedFeatureModel.providerId,
-          modelId: selectedFeatureModel.modelId,
-        }),
+        JSON.stringify(featureModel),
       );
     } catch {
       // 本地存储不可用时仅影响下次恢复，不影响当前模型调用。
     }
+    void fetch("/api/listing-workflow/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ featureModel }),
+    }).catch(() => null);
   }, [selectedFeatureModel]);
 
   useEffect(() => {
     if (!selectedImageModel) return;
+    const imageModel = {
+      providerId: selectedImageModel.providerId,
+      modelId: selectedImageModel.modelId,
+    };
     try {
       window.localStorage.setItem(
         LISTING_IMAGE_MODEL_STORAGE_KEY,
-        JSON.stringify({
-          providerId: selectedImageModel.providerId,
-          modelId: selectedImageModel.modelId,
-        }),
+        JSON.stringify(imageModel),
       );
     } catch {
       // 本地存储不可用时仅影响下次恢复，不影响当前图片生成。
     }
+    void fetch("/api/listing-workflow/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageModel }),
+    }).catch(() => null);
   }, [selectedImageModel]);
 
   useEffect(() => {
@@ -3880,6 +3614,11 @@ export function ListingWorkflowPanel() {
     );
     if ((!featureModelId || !hasSelectedFeatureModel) && featureModelChoices.length) {
       const nextFeatureModel =
+        featureModelChoices.find(
+          (model) =>
+            model.providerId === LISTING_QUICK_MODE_PROVIDER_ID &&
+            model.modelId === LISTING_QUICK_MODE_MODEL_ID,
+        ) ??
         featureModelChoices.find((model) => model.providerIsActive && model.isDefaultAnalysis) ??
         featureModelChoices.find((model) => model.isDefaultAnalysis) ??
         featureModelChoices.find((model) => model.providerIsActive && model.capabilities.structured_output) ??
@@ -3894,7 +3633,7 @@ export function ListingWorkflowPanel() {
       (model) => model.providerId === imageProviderId && model.modelId === imageModelId,
     );
     const browserImageModel =
-      imageModelChoices.find((model) => model.source === "browser" && model.modelId === "gpt-image-1.5") ??
+      imageModelChoices.find((model) => model.source === "browser" && model.modelId === "doubao-image-web") ??
       imageModelChoices.find((model) => model.source === "browser" && model.capabilities.image_gen);
     const shouldPreferBrowserImageModel =
       browserImageModel &&
@@ -3989,9 +3728,9 @@ export function ListingWorkflowPanel() {
               ) : null}
             </div>
             <div className="flex flex-wrap items-end gap-2">
-              <Button type="button" onClick={collectProduct} disabled={!sourceUrl.trim() || !selectedFeatureModel || busyAction !== null} className="gap-2">
+              <Button type="button" onClick={collectProduct} disabled={!sourceUrl.trim() || busyAction !== null} className="gap-2">
                 {busyAction === "collect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-                {busyAction === "collect" ? "采集并匹配类目" : "启动采集"}
+                {busyAction === "collect" ? "正在采集商品" : "启动采集"}
               </Button>
               <Button type="button" variant="outline" onClick={pauseCollect} disabled={busyAction !== "collect"} className="gap-2">
                 <PauseCircle className="h-4 w-4" />
@@ -4031,7 +3770,9 @@ export function ListingWorkflowPanel() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900 dark:text-white">特征填写 AI</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">只用于 Ozon 属性理解和字段填写，DeepSeek 这类文本模型放这里。</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                    采集阶段只保存商品 JSON；选择主图、翻译图片和 SKU 后，点击开始加工才会运行属性填写。
+                  </p>
                 </div>
                 <Badge variant={selectedFeatureModel ? "success" : "warning"}>{selectedFeatureModel ? "可用" : "未选择"}</Badge>
               </div>
@@ -4094,21 +3835,9 @@ export function ListingWorkflowPanel() {
 
 	          <SkuSelectionPanel
             options={displayedSkuOptions}
-            mode={skuMode}
-            selectedSkuId={selectedSkuId}
             aiVariants={aiSkuVariants}
-            processing={textPromptResponseLoading}
-            applied={skuSelectionApplied}
-            canMatchWithoutSku={jsonValid && displayedSkuOptions.length === 0}
-            onModeChange={(mode) => {
-              setSkuMode(mode);
-              setSkuSelectionApplied(false);
-            }}
-            onSelectedSkuChange={(skuId) => {
-              setSelectedSkuId(skuId);
-              setSkuSelectionApplied(false);
-            }}
-            onApply={() => void applySelectedSkusAndRunAi()}
+            selectedSkuIds={selectedSkuIds}
+            onSelectedSkuIdsChange={setSelectedSkuIds}
           />
 
           <ProductDetailRichText
@@ -4174,19 +3903,6 @@ export function ListingWorkflowPanel() {
                 </select>
               </div>
               <div className="flex flex-wrap items-end gap-2">
-                <Button
-                  type="button"
-                  onClick={() => void applySelectedSkusAndRunAi()}
-                  disabled={!jsonValid || !selectedFeatureModel || busyAction !== null}
-                  className="gap-2"
-                >
-                  {busyAction === "category-match" || busyAction === "features" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Bot className="h-4 w-4" />
-                  )}
-                  重新执行两阶段匹配
-                </Button>
                 <Button type="button" variant="outline" onClick={addCustomFeature} className="gap-2">
                   <Plus className="h-4 w-4" />
                   新增字段
@@ -4246,19 +3962,19 @@ export function ListingWorkflowPanel() {
 
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-	                <p className="text-xs text-slate-400">特征填写模型</p>
+                <p className="text-xs text-slate-400">快速模式模型</p>
 	                <p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
 	                  {selectedFeatureModel ? `${selectedFeatureModel.providerName} / ${selectedFeatureModel.label || selectedFeatureModel.modelId}` : "未选择"}
 	                </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-                <p className="text-xs text-slate-400">第一次 AI：类目</p>
+                <p className="text-xs text-slate-400">单次快速模式：类目</p>
                 <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
                   {selectedCategory ? "已匹配/已选择" : "等待匹配"}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-                <p className="text-xs text-slate-400">第二次 AI：特征值</p>
+                <p className="text-xs text-slate-400">同次结果：特征值</p>
                 <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
                   {featureHasGenerated ? "已填写，可复核" : selectedCategory ? "等待填写" : "等待类目"}
                 </p>

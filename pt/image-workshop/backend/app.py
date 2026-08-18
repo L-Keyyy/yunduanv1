@@ -54,11 +54,18 @@ SHARED_BACKEND_DIR = WORKSPACE_ROOT / "ozon_websit" / "backend"
 if str(SHARED_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(SHARED_BACKEND_DIR))
 
-from google_translate_image_rpc import (  # noqa: E402
-    GoogleTranslateImageRpcError,
-    GoogleTranslateImageRpcService,
-    GoogleTranslateImageServiceBusyError,
-)
+try:
+    from google_translate_image_rpc import (  # noqa: E402
+        GoogleTranslateImageRpcError,
+        GoogleTranslateImageRpcService,
+        GoogleTranslateImageServiceBusyError,
+    )
+except ModuleNotFoundError:
+    from .google_translate_image_rpc import (  # type: ignore
+        GoogleTranslateImageRpcError,
+        GoogleTranslateImageRpcService,
+        GoogleTranslateImageServiceBusyError,
+    )
 
 
 def _env_bool(name: str, default: bool) -> bool:

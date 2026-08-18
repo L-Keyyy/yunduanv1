@@ -3,7 +3,17 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
+import { sanitizeCollectedProductJson } from "@/lib/listing-workflow/ai-product-json";
 import { fail, handleRouteError, ok } from "@/lib/utils/route";
+
+const listingPriceSchema = z
+  .string()
+  .trim()
+  .refine((value) => {
+    if (!value) return true;
+    const parsed = Number(value.replace(",", "."));
+    return Number.isFinite(parsed) && parsed >= 15;
+  }, "商品当前价格不得低于 15 元");
 
 const updateItemSchema = z.object({
   stage: z.enum(["COLLECTED", "PROCESSING"]).optional(),
@@ -15,7 +25,7 @@ const updateItemSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(),
   offerId: z.string().trim().min(1).max(200).optional(),
   imageUrl: z.string().trim().optional().nullable(),
-  currentPrice: z.string().trim().optional().nullable(),
+  currentPrice: listingPriceSchema.optional().nullable(),
   oldPrice: z.string().trim().optional().nullable(),
   minPrice: z.string().trim().optional().nullable(),
   costPrice: z.string().trim().optional().nullable(),
@@ -24,6 +34,7 @@ const updateItemSchema = z.object({
   categoryLabel: z.string().trim().optional().nullable(),
   categoryPath: z.array(z.string()).optional().nullable(),
   scrapedData: z.record(z.string(), z.unknown()).optional(),
+  workflowData: z.record(z.string(), z.unknown()).optional().nullable(),
   features: z
     .array(z.record(z.string(), z.unknown()))
     .optional()
@@ -64,8 +75,16 @@ export async function PATCH(
               ? Prisma.JsonNull
               : (input.categoryPath as Prisma.InputJsonValue),
         scrapedData: input.scrapedData
-          ? (input.scrapedData as Prisma.InputJsonValue)
+          ? (sanitizeCollectedProductJson(
+              input.scrapedData,
+            ) as Prisma.InputJsonValue)
           : undefined,
+        workflowData:
+          input.workflowData === undefined
+            ? undefined
+            : input.workflowData === null
+              ? Prisma.JsonNull
+              : (input.workflowData as Prisma.InputJsonValue),
         features:
           input.features === undefined
             ? undefined

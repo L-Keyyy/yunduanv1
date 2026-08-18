@@ -1,3 +1,5 @@
+import { jsonrepair } from "jsonrepair";
+
 export const OZON_BASE_FIELD_IDS = [
   "category_type",
   "offer_id",
@@ -36,6 +38,7 @@ export type OzonMappedAttribute = {
   attributeId: string;
   label: string;
   value: string;
+  displayValue?: string;
   complexId: number;
   values: OzonMappedAttributeValue[];
   jsonKey?: string;
@@ -45,6 +48,8 @@ export type OzonMappedAttribute = {
 export type OzonAiVariantMapping = {
   index: number;
   skuKey: string;
+  sourceSpecText: string;
+  specLine: string;
   name: string;
   offerId: string;
   price: string;
@@ -70,6 +75,7 @@ export type OzonAiMapping = {
     images: string[];
   };
   variants: OzonAiVariantMapping[];
+  notes: string[];
   importItem: Record<string, unknown> | null;
   warnings: string[];
 };
@@ -260,6 +266,14 @@ function parseAiJson(raw: string) {
     }
   }
 
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(jsonrepair(attempt));
+    } catch {
+      // ChatGPT 网页可能把文件引用渲染成带换行的文本，继续尝试其他候选。
+    }
+  }
+
   const looseObject = parseLooseScalarPairs(normalizedRaw);
   if (Object.keys(looseObject).length) return looseObject;
 
@@ -308,6 +322,37 @@ function readAlias(records: Record<string, unknown>[], aliases: string[]) {
   for (const record of records) {
     for (const [key, value] of Object.entries(record)) {
       if (aliasSet.has(normalizeKey(key)) && textValue(value)) return value;
+    }
+  }
+  return undefined;
+}
+
+function readAliasDeep(value: unknown, aliases: string[], maxDepth = 6) {
+  const aliasSet = new Set(aliases.map(normalizeKey));
+  const queue: Array<{ value: unknown; depth: number }> = [
+    { value, depth: 0 },
+  ];
+  let visited = 0;
+  while (queue.length && visited < 500) {
+    const current = queue.shift();
+    if (!current) break;
+    visited += 1;
+    if (current.depth > maxDepth || !current.value) continue;
+    if (Array.isArray(current.value)) {
+      for (const entry of current.value) {
+        queue.push({ value: entry, depth: current.depth + 1 });
+      }
+      continue;
+    }
+    if (typeof current.value !== "object") continue;
+    const record = asRecord(current.value);
+    for (const [key, entry] of Object.entries(record)) {
+      if (aliasSet.has(normalizeKey(key)) && textValue(entry)) return entry;
+    }
+    for (const entry of Object.values(record)) {
+      if (entry && typeof entry === "object") {
+        queue.push({ value: entry, depth: current.depth + 1 });
+      }
     }
   }
   return undefined;
@@ -408,6 +453,7 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
       attributes: [],
       images: { primaryImage: "", images: [] },
       variants: [],
+      notes: [],
       importItem: null,
       warnings: ["AI 回答中没有可解析的 JSON。"],
     };
@@ -432,10 +478,27 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
     asRecord(root.base_info),
   ];
 
+  const descriptionCategoryAliases = [
+    "description_category_id",
+    "descriptionCategoryId",
+  ];
+  const typeAliases = ["type_id", "typeId"];
+  const categoryIdFromText = raw.match(
+    /description[_\s-]*category[_\s-]*id["'\s]*[:=]["'\s]*(\d+)/i,
+  )?.[1];
+  const typeIdFromText = raw.match(
+    /(?:^|[^a-z])type[_\s-]*id["'\s]*[:=]["'\s]*(\d+)/im,
+  )?.[1];
   const descriptionCategoryId = positiveInteger(
-    readAlias(records, ["description_category_id", "descriptionCategoryId"]),
+    readAlias(records, descriptionCategoryAliases) ??
+      readAliasDeep(product, descriptionCategoryAliases) ??
+      categoryIdFromText,
   );
-  const typeId = positiveInteger(readAlias(records, ["type_id", "typeId"]));
+  const typeId = positiveInteger(
+    readAlias(records, typeAliases) ??
+      readAliasDeep(product, typeAliases) ??
+      typeIdFromText,
+  );
   const category = { descriptionCategoryId, typeId };
 
   const baseById = new Map<OzonBaseFieldId, OzonMappedBaseField>();
@@ -507,12 +570,20 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
         continue;
       }
       const attributeId = textValue(rawId);
-      const values = normalizeAttributeValues(feature.values ?? feature.value);
+      const values = normalizeAttributeValues(feature.values ?? feature);
       const display = attributeDisplayValue(values);
       if (!attributeId || !display) continue;
       addMappedAttribute({
         attributeId,
-        label: textValue(feature.label ?? feature.name) || `Ozon 属性 ${attributeId}`,
+        label:
+          textValue(
+            feature.keyZh ??
+              feature.nameZh ??
+              feature.attributeTitleZh ??
+              feature.attributeTitleRu ??
+              feature.label ??
+              feature.name,
+          ) || `Ozon 属性 ${attributeId}`,
         value: display,
         complexId: positiveInteger(feature.complex_id ?? feature.complexId) ?? 0,
         values,
@@ -553,6 +624,9 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
   const handledContainerKeys = new Set([
     "complexattributes",
     "features",
+    "uploadfeatures",
+    "displayfeatures",
+    "variants",
   ]);
   const ignoredRecursiveKeys = new Set([
     "descriptioncategoryid",
@@ -654,8 +728,55 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
 
   processFeatureArray(root.features);
   processFeatureArray(product.features);
+  processFeatureArray(root.uploadFeatures);
+  if (product !== root) processFeatureArray(product.uploadFeatures);
   processOzonAttributes(root.attributes);
   if (product !== root) processOzonAttributes(product.attributes);
+
+  const enrichDisplayFeatures = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const entry of value) {
+      const displayFeature = asRecord(entry);
+      const attributeId = textValue(
+        displayFeature.attributeId ?? displayFeature.attribute_id ?? displayFeature.id,
+      );
+      if (!attributeId) continue;
+      const complexId =
+        positiveInteger(displayFeature.complex_id ?? displayFeature.complexId) ?? 0;
+      const mapped = mappedAttributes.get(`${attributeId}:${complexId}`);
+      const label = textValue(
+        displayFeature.keyZh ??
+          displayFeature.nameZh ??
+          displayFeature.attributeTitleZh ??
+          displayFeature.label ??
+          displayFeature.name,
+      );
+      if (mapped) {
+        if (label) mapped.label = label;
+        const displayValue = textValue(
+          displayFeature.valueZh ?? displayFeature.value ?? displayFeature.text,
+        );
+        if (displayValue) mapped.displayValue = displayValue;
+        continue;
+      }
+      const displayValue = textValue(
+        displayFeature.valueZh ?? displayFeature.value ?? displayFeature.text,
+      );
+      if (!displayValue) continue;
+      addMappedAttribute({
+        attributeId,
+        label: label || `Ozon 属性 ${attributeId}`,
+        value: displayValue,
+        displayValue,
+        complexId,
+        values: [{ value: displayValue }],
+        jsonKey: label || attributeId,
+        jsonPath: `displayFeatures.${attributeId}`,
+      });
+    }
+  };
+  enrichDisplayFeatures(root.displayFeatures);
+  if (product !== root) enrichDisplayFeatures(product.displayFeatures);
 
   const complexGroups = [
     ...(Array.isArray(root.complex_attributes) ? root.complex_attributes : []),
@@ -727,29 +848,67 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
   const rawItems = Array.isArray(root.items)
     ? root.items.map(asRecord).filter((entry) => Object.keys(entry).length > 0)
     : [];
-  const variants: OzonAiVariantMapping[] =
-    rawItems.length > 1
-      ? rawItems.map((rawItem, index) => {
+  const explicitVariants = Array.isArray(root.variants)
+    ? root.variants
+        .map(asRecord)
+        .filter((entry) => Object.keys(entry).length > 0)
+    : [];
+  const variantItems = explicitVariants.length
+    ? explicitVariants
+    : rawItems.length > 1
+      ? rawItems
+      : [];
+  const variants: OzonAiVariantMapping[] = variantItems.map(
+    (rawItem, index) => {
           const mapped = mapOzonAiResponse(
-            JSON.stringify({ items: [rawItem] }),
+            JSON.stringify({
+              descriptionCategoryId,
+              typeId,
+              uploadFeatures:
+                rawItem.uploadFeatures ?? rawItem.features ?? rawItem.attributes,
+              displayFeatures: rawItem.displayFeatures,
+            }),
           );
           const itemBase = new Map(
             mapped.baseFields.map((field) => [field.id, field.value]),
           );
-          const name = itemBase.get("name") ?? "";
-          const offerId = itemBase.get("offer_id") ?? "";
-          const price = itemBase.get("price") ?? "";
+          const name =
+            textValue(rawItem.sourceSkuName ?? rawItem.name ?? rawItem.title) ||
+            itemBase.get("name") ||
+            "";
+          const offerId =
+            textValue(
+              rawItem.offerId ??
+                rawItem.offer_id ??
+                rawItem.sellerCode ??
+                rawItem.seller_code,
+            ) ||
+            itemBase.get("offer_id") ||
+            "";
+          const price =
+            textValue(rawItem.price ?? rawItem.salePrice ?? rawItem.sale_price) ||
+            itemBase.get("price") ||
+            "";
           return {
             index,
             skuKey:
-              offerId ||
               textValue(
-                rawItem.sku_id ??
+                rawItem.sourceSkuId ??
+                  rawItem.source_sku_id ??
                   rawItem.skuId ??
+                  rawItem.sku_id ??
                   rawItem.product_id ??
                   rawItem.productId,
               ) ||
+              offerId ||
               `sku-${index + 1}`,
+            sourceSpecText: textValue(
+              rawItem.sourceSpecText ??
+                rawItem.source_spec_text ??
+                rawItem.specText ??
+                rawItem.spec_text,
+            ),
+            specLine: textValue(rawItem.specLine ?? rawItem.spec_line),
             name,
             offerId,
             price,
@@ -758,11 +917,17 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
             images: mapped.images,
             importItem: mapped.importItem,
           };
-        })
-      : [];
+        },
+  );
+  const notes = uniqueStrings(
+    Array.isArray(root.notes) ? root.notes : [root.notes],
+  );
 
   return {
-    recognized: baseFields.length > 0 || attributes.length > 0,
+    recognized:
+      baseFields.length > 0 ||
+      attributes.length > 0 ||
+      variants.some((variant) => variant.attributes.length > 0),
     category,
     baseFields,
     attributes,
@@ -771,6 +936,7 @@ export function mapOzonAiResponse(raw: string): OzonAiMapping {
       images: allImages.slice(1),
     },
     variants,
+    notes,
     importItem,
     warnings,
   };

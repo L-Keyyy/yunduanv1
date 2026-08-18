@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -22,6 +23,10 @@ const categoryMatchRequestSchema = z.object({
   model: z.string().min(1).optional().nullable(),
   customPrompt: z.string().trim().max(4000).optional().nullable(),
   systemPrompt: z.string().trim().max(8000).optional().nullable(),
+  // 由采集列表发起时带上这两个字段，让服务端在 AI 返回后直接落库。
+  // 这样即使页面切换或请求窗口被关闭，商品也会结束“匹配中”状态。
+  workflowItemId: z.string().trim().min(1).max(200).optional().nullable(),
+  workflowRunId: z.string().trim().min(1).max(300).optional().nullable(),
 });
 
 const aiCategoryMatchSchema = z.object({
@@ -47,6 +52,28 @@ type CategoryCandidate = {
   descriptionCategoryId: number | null;
   typeId: number | null;
   score: number;
+};
+
+type CategoryMatchResult = {
+  category: ReturnType<typeof serializeCandidate> | null;
+  preparedProduct?: Record<string, unknown>;
+  aiDecision?: unknown;
+  categoryCorrection?: unknown;
+  confidence?: number;
+  reason?: string;
+  rawResponse?: string;
+  aiStatus: {
+    ok: boolean;
+    message: string;
+  };
+  [key: string]: unknown;
+};
+
+type WorkflowMatchContext = {
+  itemId: string;
+  runId: string;
+  providerId: string;
+  model: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -192,6 +219,98 @@ function serializeCandidate(category: CategoryCandidate) {
     typeId: category.typeId,
     score: category.score,
   };
+}
+
+function storedJsonObject(value: Prisma.JsonValue): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function storedStringArray(value: Prisma.JsonValue): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        typeof entry === "string" && entry.trim() ? [entry.trim()] : [],
+      )
+    : [];
+}
+
+function workflowCategoryNotes(value: Prisma.JsonValue, message: string) {
+  return [
+    ...storedStringArray(value).filter(
+      (note) => !note.startsWith("类目匹配："),
+    ),
+    `类目匹配：${message}`,
+  ].slice(0, 100);
+}
+
+async function persistWorkflowCategoryResult(
+  context: WorkflowMatchContext | null,
+  result: CategoryMatchResult,
+) {
+  if (!context) return;
+  const current = await prisma.listingWorkflowItem.findUnique({
+    where: { id: context.itemId },
+  });
+  if (!current || current.stage !== "COLLECTED") return;
+
+  const aiResponse = storedJsonObject(current.aiResponse);
+  const savedCategoryMatch =
+    aiResponse.categoryMatch &&
+    typeof aiResponse.categoryMatch === "object" &&
+    !Array.isArray(aiResponse.categoryMatch)
+      ? (aiResponse.categoryMatch as Record<string, unknown>)
+      : {};
+  // 旧请求迟到时不覆盖用户后来发起的新任务。
+  if (savedCategoryMatch.runId !== context.runId) return;
+
+  const matchedCategory = result.category;
+  const message = matchedCategory
+    ? `已匹配 ${matchedCategory.label}`
+    : result.aiStatus.message || "AI 没有返回匹配类目";
+  await prisma.listingWorkflowItem.update({
+    where: { id: context.itemId },
+    data: {
+      status: matchedCategory ? "PENDING_AI" : "AI_FAILED",
+      categoryId: matchedCategory?.id ?? null,
+      categoryLabel: matchedCategory?.label ?? null,
+      categoryPath: matchedCategory
+        ? (matchedCategory.path as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      aiResponse: {
+        ...aiResponse,
+        categoryMatch: matchedCategory
+          ? {
+              ...savedCategoryMatch,
+              providerId: context.providerId,
+              model: context.model,
+              runId: context.runId,
+              status: "matched",
+              error: null,
+              preparedProduct: result.preparedProduct ?? {},
+              aiDecision: result.aiDecision ?? null,
+              categoryCorrection: result.categoryCorrection ?? null,
+              confidence: result.confidence ?? 0,
+              reason: result.reason ?? "",
+              completedAt: new Date().toISOString(),
+            }
+          : {
+              ...savedCategoryMatch,
+              providerId: context.providerId,
+              model: context.model,
+              runId: context.runId,
+              status: "failed",
+              error: message,
+              rawResponse: result.rawResponse ?? null,
+              completedAt: new Date().toISOString(),
+            },
+      } as Prisma.InputJsonValue,
+      notes: workflowCategoryNotes(
+        current.notes,
+        matchedCategory ? `已匹配 ${matchedCategory.label}` : message,
+      ) as Prisma.InputJsonValue,
+    },
+  });
 }
 
 function integerValue(value: number | string | null | undefined) {
@@ -363,8 +482,21 @@ function explicitTitleCategory(
 }
 
 export async function POST(request: NextRequest) {
+  let workflowContext: WorkflowMatchContext | null = null;
   try {
     const parsed = categoryMatchRequestSchema.parse(await request.json());
+    if (parsed.workflowItemId && parsed.workflowRunId && parsed.model) {
+      workflowContext = {
+        itemId: parsed.workflowItemId,
+        runId: parsed.workflowRunId,
+        providerId: parsed.providerId?.trim() || "",
+        model: parsed.model.trim(),
+      };
+    }
+    const respond = async (result: CategoryMatchResult) => {
+      await persistWorkflowCategoryResult(workflowContext, result);
+      return ok(result);
+    };
     const preparedProduct = prepareProductFacts(parsed.scrapedData);
     const promptAudit = auditProductFacts(parsed.scrapedData, preparedProduct);
     const facts = extractSourceFacts({
@@ -394,7 +526,7 @@ export async function POST(request: NextRequest) {
 
     if (categories.length === 0) {
       const ozonConnection = await getOzonConnectionState();
-      return ok({
+      return respond({
         category: null,
         candidates: [],
         preparedProduct,
@@ -433,7 +565,7 @@ export async function POST(request: NextRequest) {
 
     const modelId = parsed.model?.trim();
     if (!modelId) {
-      return ok({
+      return respond({
         category: null,
         candidates: candidates.slice(0, 8).map(serializeCandidate),
         preparedProduct,
@@ -467,7 +599,7 @@ export async function POST(request: NextRequest) {
       const { provider, adapter } = await getProviderAdapter(parsed.providerId ?? undefined);
       const selectedModel = provider.models.find((model) => model.modelId === modelId);
       if (!selectedModel || !modelCanMatchCategory(selectedModel)) {
-        return ok({
+        return respond({
           category: null,
           candidates: candidates.slice(0, 8).map(serializeCandidate),
           preparedProduct,
@@ -499,7 +631,7 @@ export async function POST(request: NextRequest) {
       structured = parseStructuredJson(completionText);
       aiParsed = aiCategoryMatchSchema.parse(structured.value);
     } catch (error) {
-      return ok({
+      return respond({
         category: null,
         candidates: candidates.slice(0, 8).map(serializeCandidate),
         preparedProduct,
@@ -552,7 +684,7 @@ export async function POST(request: NextRequest) {
       ? aiScoredCandidates
       : candidates;
 
-    return ok({
+    return respond({
       category: matchedCategory ? serializeCandidate(matchedCategory) : null,
       candidates: responseCandidates.slice(0, 8).map(serializeCandidate),
       preparedProduct,
@@ -586,6 +718,14 @@ export async function POST(request: NextRequest) {
         : aiParsed.reason ?? "",
     });
   } catch (error) {
+    if (workflowContext) {
+      const message =
+        error instanceof Error ? error.message : "AI 类目匹配请求异常";
+      await persistWorkflowCategoryResult(workflowContext, {
+        category: null,
+        aiStatus: { ok: false, message },
+      }).catch(() => undefined);
+    }
     return handleRouteError(error);
   }
 }

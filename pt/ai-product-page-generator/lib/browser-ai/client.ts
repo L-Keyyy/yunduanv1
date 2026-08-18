@@ -1,4 +1,6 @@
 import fs from "fs";
+import http from "http";
+import https from "https";
 import path from "path";
 import { spawn } from "child_process";
 
@@ -82,23 +84,65 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJson<T>(pathname: string, init?: RequestInit, timeoutMs = 5000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${browserAiBaseUrl()}${pathname}`, {
-      ...init,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    const payload = (await response.json()) as T & { ok?: boolean; error?: string };
-    if (!response.ok || payload.ok === false) {
-      throw new Error(sanitizeBrowserAiError(payload.error || `浏览器模型服务请求失败：${response.status}`));
+async function fetchJson<T>(
+  pathname: string,
+  init?: RequestInit,
+  timeoutMs: number | null = 5000,
+) {
+  const url = new URL(`${browserAiBaseUrl()}${pathname}`);
+  const body = init?.body ? String(init.body) : "";
+  return new Promise<T>((resolve, reject) => {
+    const transport = url.protocol === "https:" ? https : http;
+    const request = transport.request(
+      url,
+      {
+        method: init?.method || "GET",
+        headers: {
+          ...(body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+              }
+            : {}),
+          ...((init?.headers as Record<string, string> | undefined) || {}),
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("error", reject);
+        response.on("end", () => {
+          const status = response.statusCode || 500;
+          try {
+            const payload = JSON.parse(
+              Buffer.concat(chunks).toString("utf8") || "null",
+            ) as T & { ok?: boolean; error?: string };
+            if (status >= 400 || payload?.ok === false) {
+              reject(
+                new Error(
+                  sanitizeBrowserAiError(
+                    payload?.error || `浏览器模型服务请求失败：${status}`,
+                  ),
+                ),
+              );
+              return;
+            }
+            resolve(payload);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    if (timeoutMs !== null && timeoutMs > 0) {
+      request.setTimeout(timeoutMs, () => {
+        request.destroy(new Error(`浏览器模型服务等待超时（${timeoutMs}ms）`));
+      });
     }
-    return payload;
-  } finally {
-    clearTimeout(timeout);
-  }
+    request.on("error", reject);
+    if (body) request.write(body);
+    request.end();
+  });
 }
 
 function sanitizeBrowserAiError(message: string) {
@@ -260,20 +304,14 @@ export function isBrowserAiProvider(providerId?: string | null) {
 }
 
 export async function getBrowserAiModels() {
-  let doubaoServiceReady = false;
-  try {
-    await ensureDoubaoWebService();
-    doubaoServiceReady = await doubaoServiceIsReachable();
-  } catch {
-    doubaoServiceReady = false;
-  }
   await ensureBrowserAiService();
   const status = await fetchJson<FlowStatusPayload>("/api/status");
+  const models = normalizeModels(status.models);
   return {
     runtimeStatus: status.runtime?.status || "idle",
     runtimeMessage: status.runtime?.message || "浏览器核心尚未启动",
-    doubaoServiceReady,
-    models: normalizeModels(status.models),
+    doubaoServiceReady: models.some((model) => model.id === "doubao-web"),
+    models,
   };
 }
 
@@ -281,10 +319,9 @@ async function runBrowserModel(input: {
   model: string;
   prompt: string;
   images?: string[];
+  files?: string[];
+  timeoutMs?: number | null;
 }) {
-  if (input.model === "doubao-web" || input.model === "doubao-image-web") {
-    await ensureDoubaoWebService();
-  }
   await ensureBrowserAiService();
   const generated = await fetchJson<BrowserGeneratePayload>(
     "/api/generate",
@@ -295,9 +332,10 @@ async function runBrowserModel(input: {
         modelId: input.model,
         prompt: input.prompt,
         images: input.images ?? [],
+        files: input.files ?? [],
       }),
     },
-    5 * 60_000,
+    input.timeoutMs === null ? null : input.timeoutMs ?? 5 * 60_000,
   );
   return generated.result ?? {};
 }
@@ -306,10 +344,16 @@ export async function generateBrowserText(input: {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  images?: string[];
+  files?: string[];
+  timeoutMs?: number | null;
 }) {
   const result = await runBrowserModel({
     model: input.model,
     prompt: `${input.systemPrompt}\n\n${input.userPrompt}`,
+    images: input.images,
+    files: input.files,
+    timeoutMs: input.timeoutMs,
   });
   if (!result.text?.trim()) {
     throw new Error("浏览器文本模型没有返回有效内容。");
@@ -327,6 +371,12 @@ export async function generateBrowserImage(input: {
     model: input.model,
     prompt: `${input.prompt}\n\n画幅比例：${input.aspectRatio}`,
     images: input.referenceImages,
+    timeoutMs: /四宫格|2\s*[×xX]\s*2|four[- ]?panel|four quadrant/i.test(
+      input.prompt,
+    )
+      // 适配器自身最多等待 10 分钟；调用端多留 2 分钟处理下载、会话清理和响应传输。
+      ? 12 * 60_000
+      : undefined,
   });
   if (!result.image?.trim()) {
     throw new Error("浏览器图片模型没有返回有效图片。");

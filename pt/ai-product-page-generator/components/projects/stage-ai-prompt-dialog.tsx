@@ -125,12 +125,12 @@ export function StageAiPromptDialog({
   const [draft, setDraft] = useState<ListingStageAiPromptConfig>(() =>
     clonePromptConfig(value),
   );
-  const [activeStage, setActiveStage] = useState<StageKey>("categoryMatch");
+  const [activeStage, setActiveStage] = useState<StageKey>("imageGeneration");
 
   useEffect(() => {
     if (!open) return;
     setDraft(clonePromptConfig(value));
-    setActiveStage("categoryMatch");
+    setActiveStage("imageGeneration");
   }, [open, value]);
 
   const normalizedDraft = useMemo(
@@ -141,16 +141,8 @@ export function StageAiPromptDialog({
     promptConfigKey(normalizedDraft) === promptConfigKey(defaultValue);
   const changed = promptConfigKey(normalizedDraft) !== promptConfigKey(value);
   const hasInvalidPrompt =
-    !normalizedDraft.categoryMatch.systemPrompt ||
-    !normalizedDraft.categoryMatch.taskPrompt ||
-    !normalizedDraft.featureFill.systemPrompt ||
-    !normalizedDraft.featureFill.taskPrompt ||
-    !normalizedDraft.imageGeneration.prompt ||
-    normalizedDraft.categoryMatch.systemPrompt.length > systemPromptLimit ||
-    normalizedDraft.featureFill.systemPrompt.length > systemPromptLimit ||
-    normalizedDraft.categoryMatch.taskPrompt.length > taskPromptLimit ||
-    normalizedDraft.featureFill.taskPrompt.length > taskPromptLimit ||
-    normalizedDraft.imageGeneration.prompt.length > imagePromptLimit;
+    !draft.imageGeneration.prompt.trim() ||
+    draft.imageGeneration.prompt.length > imagePromptLimit;
 
   if (!open || typeof document === "undefined") return null;
 
@@ -193,7 +185,7 @@ export function StageAiPromptDialog({
               {changed ? <Badge variant="warning">待保存</Badge> : null}
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-              这里统一编辑并保存类目判断、特征匹配和主图生图提示词；商品 JSON、类目字段模板和参考图由程序自动追加。
+              类目和特征固定使用 China Product to Ozon 快速模式；这里仅编辑会保存到全局并用于后续任务的图片提示词。
             </p>
           </div>
           <button
@@ -207,8 +199,8 @@ export function StageAiPromptDialog({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <div className="grid gap-3 lg:grid-cols-3">
-            {(["categoryMatch", "featureFill", "imageGeneration"] as StageKey[]).map((stage) => {
+          <div className="grid gap-3">
+            {(["imageGeneration"] as StageKey[]).map((stage) => {
               const stageChanged =
                 promptConfigKey({
                   ...defaultValue,
@@ -281,7 +273,7 @@ export function StageAiPromptDialog({
               <div className="mt-4 space-y-4">
                 <PromptTextarea
                   label="主图生图提示词（prompt）"
-                  value={normalizedDraft.imageGeneration.prompt}
+                  value={draft.imageGeneration.prompt}
                   limit={imagePromptLimit}
                   placeholder="输入主图生成提示词"
                   onChange={(nextValue) =>
@@ -324,7 +316,7 @@ export function StageAiPromptDialog({
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <PromptTextarea
                   label="系统提示词（systemPrompt）"
-                  value={normalizedDraft[activeStage].systemPrompt}
+                  value={draft[activeStage].systemPrompt}
                   limit={systemPromptLimit}
                   placeholder="输入系统提示词"
                   onChange={(nextValue) =>
@@ -333,7 +325,7 @@ export function StageAiPromptDialog({
                 />
                 <PromptTextarea
                   label="任务提示词（taskPrompt）"
-                  value={normalizedDraft[activeStage].taskPrompt}
+                  value={draft[activeStage].taskPrompt}
                   limit={taskPromptLimit}
                   placeholder="输入任务提示词"
                   onChange={(nextValue) =>

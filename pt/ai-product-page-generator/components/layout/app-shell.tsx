@@ -6,6 +6,8 @@ import {
   ChevronRight,
   Database,
   House,
+  Images,
+  ListChecks,
   MessageSquareMore,
   Settings2,
   WandSparkles,
@@ -22,6 +24,8 @@ const navItems = [
   { href: "/projects/new", label: "主页面", icon: House },
   { href: "/listing/collection", label: "采集阶段", icon: Database },
   { href: "/listing/processing", label: "加工阶段", icon: WandSparkles },
+  { href: "/listing/queue", label: "等待队列", icon: ListChecks },
+  { href: "/listing/batch-images", label: "批量图片", icon: Images },
   { href: "/relay-mvp", label: "消息中继测试", icon: MessageSquareMore },
 ];
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { ozonSellerRequest } from "@/lib/ozon/client";
 import { buildOzonProductImportPayload } from "@/lib/ozon/product-import-payload";
+import { ensurePermanentWorkflowImageUrls } from "@/lib/listing-workflow/public-image-host";
 import { handleRouteError, ok } from "@/lib/utils/route";
 
 const attributeValueSchema = z.object({
@@ -30,6 +31,7 @@ const featureSchema = z.object({
 const requestSchema = z.object({
   action: z.enum(["preview", "submit"]).default("preview"),
   confirmed: z.boolean().optional(),
+  configId: z.string().trim().min(1).optional(),
   category: z
     .object({
       descriptionCategoryId: z.number().int().positive().nullable().optional(),
@@ -60,14 +62,54 @@ const requestSchema = z.object({
           .nullable()
           .optional(),
         features: z.array(featureSchema).optional(),
+        depth: z.union([z.number(), z.string()]).optional(),
+        width: z.union([z.number(), z.string()]).optional(),
+        height: z.union([z.number(), z.string()]).optional(),
+        weight: z.union([z.number(), z.string()]).optional(),
+        dimensionUnit: z.enum(["mm", "cm", "in"]).optional(),
+        weightUnit: z.enum(["g", "kg", "lb"]).optional(),
       }),
     )
     .optional(),
 });
 
+function positiveTaskId(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const result = (payload as Record<string, unknown>).result;
+  if (!result || typeof result !== "object") return null;
+  const taskId = Number((result as Record<string, unknown>).task_id);
+  return Number.isSafeInteger(taskId) && taskId > 0 ? taskId : null;
+}
+
+async function permanentImages(
+  images: { primary_image?: string; images?: string[] } | null | undefined,
+) {
+  if (!images) return images;
+  const requested = [images.primary_image, ...(images.images ?? [])]
+    .filter((value): value is string => Boolean(value?.trim()));
+  if (!requested.length) return images;
+  const permanent = await ensurePermanentWorkflowImageUrls(requested);
+  return {
+    primary_image: images.primary_image ? permanent[0] : undefined,
+    images: images.primary_image ? permanent.slice(1) : permanent,
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const input = requestSchema.parse(await request.json());
+    const parsed = requestSchema.parse(await request.json());
+    const input = parsed.action === "submit"
+      ? {
+          ...parsed,
+          images: await permanentImages(parsed.images),
+          variants: parsed.variants
+            ? await Promise.all(parsed.variants.map(async (variant) => ({
+                ...variant,
+                images: await permanentImages(variant.images),
+              })))
+            : parsed.variants,
+        }
+      : parsed;
     const built = buildOzonProductImportPayload(input);
     if (input.action === "preview") {
       return ok(built);
@@ -81,11 +123,18 @@ export async function POST(request: NextRequest) {
     const response = await ozonSellerRequest<Record<string, unknown>>(
       "/v3/product/import",
       built.payload,
-      { timeoutMs: 120_000 },
+      { timeoutMs: 120_000, configId: input.configId },
     );
+    const taskId = positiveTaskId(response);
+    if (!taskId) {
+      throw new Error("Ozon 已接收上传请求，但响应中缺少有效的 task_id。");
+    }
     return ok({
       ...built,
       submitted: true,
+      taskId,
+      configId: input.configId ?? null,
+      submittedAt: new Date().toISOString(),
       response,
     });
   } catch (error) {

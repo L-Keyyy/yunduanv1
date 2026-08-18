@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { getOzonConnectionState } from "@/lib/ozon/client";
-import { saveOzonApiConfig } from "@/lib/ozon/config-service";
+import {
+  listOzonConnectionStates,
+  saveOzonApiConfig,
+} from "@/lib/ozon/config-service";
 import { handleRouteError, ok } from "@/lib/utils/route";
 
 const ozonConfigSchema = z.object({
@@ -26,9 +29,13 @@ export async function POST(request: NextRequest) {
     const parsed = ozonConfigSchema.parse(await request.json());
     const savedConfigId = await saveOzonApiConfig(parsed);
     const connection = await getOzonConnectionState();
+    const savedStore = (await listOzonConnectionStates()).find(
+      (store) => store.id === savedConfigId,
+    );
     return ok({
       savedConfigId,
       connection,
+      savedStore,
     });
   } catch (error) {
     return handleRouteError(error);

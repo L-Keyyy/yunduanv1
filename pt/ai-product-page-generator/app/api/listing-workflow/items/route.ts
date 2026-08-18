@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
+import { sanitizeCollectedProductJson } from "@/lib/listing-workflow/ai-product-json";
 import { handleRouteError, ok } from "@/lib/utils/route";
 
 const stageSchema = z.enum(["COLLECTED", "PROCESSING"]);
@@ -32,6 +33,7 @@ const createItemSchema = z.object({
   categoryLabel: z.string().trim().optional().nullable(),
   categoryPath: z.array(z.string()).optional().nullable(),
   scrapedData: z.record(z.string(), z.unknown()),
+  workflowData: z.record(z.string(), z.unknown()).optional().nullable(),
   features: z.array(featureSchema).optional().nullable(),
   aiResponse: z.record(z.string(), z.unknown()).optional().nullable(),
   notes: z.array(z.string()).optional().nullable(),
@@ -57,7 +59,12 @@ export async function POST(request: NextRequest) {
     const item = await prisma.listingWorkflowItem.create({
       data: {
         ...input,
-        scrapedData: input.scrapedData as Prisma.InputJsonValue,
+        scrapedData: sanitizeCollectedProductJson(
+          input.scrapedData,
+        ) as Prisma.InputJsonValue,
+        workflowData: input.workflowData
+          ? (input.workflowData as Prisma.InputJsonValue)
+          : undefined,
         categoryPath: input.categoryPath
           ? (input.categoryPath as Prisma.InputJsonValue)
           : undefined,

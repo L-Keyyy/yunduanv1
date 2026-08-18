@@ -5,6 +5,9 @@ import { nanoid } from "nanoid";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
+import { ensureDoubaoWebService } from "@/lib/browser-ai/client";
+import { publishWorkflowImage } from "@/lib/listing-workflow/public-image-host";
+import { runProcessingFifo } from "@/lib/listing-workflow/processing-fifo";
 import { env } from "@/lib/utils/env";
 import { extFromMime, relativeStorageUrl, sanitizeFileName } from "@/lib/utils/files";
 import { handleRouteError, ok } from "@/lib/utils/route";
@@ -95,6 +98,7 @@ async function saveTranslatedImage(params: {
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, parsed.bytes);
+  const publicImage = await publishWorkflowImage({ absolutePath, fileName });
   await fs.writeFile(
     path.join(storageRoot(), `${relativePath}.json`),
     JSON.stringify(
@@ -103,6 +107,7 @@ async function saveTranslatedImage(params: {
         engine: params.engine,
         targetLanguage: params.targetLanguage,
         mimeType: parsed.mimeType,
+        publicImageUrl: publicImage.publicUrl,
         createdAt: new Date().toISOString(),
       },
       null,
@@ -114,13 +119,15 @@ async function saveTranslatedImage(params: {
   return {
     fileName,
     filePath: relativePath.split(path.sep).join("/"),
-    imageUrl: relativeStorageUrl(relativePath),
+    imageUrl: publicImage.publicUrl ?? relativeStorageUrl(relativePath),
     mimeType: parsed.mimeType,
+    warnings: publicImage.warning ? [publicImage.warning] : [],
   };
 }
 
 export async function POST(request: NextRequest) {
-  try {
+  return runProcessingFifo("translation", null, async () => {
+    try {
     const input = requestSchema.parse(await request.json());
     const source = await imageUrlToBuffer(input.imageUrl, request.nextUrl.origin);
 
@@ -132,6 +139,7 @@ export async function POST(request: NextRequest) {
     formData.set("translation_mode", input.translationMode);
     formData.set("ocr_engine", input.ocrEngine);
 
+    await ensureDoubaoWebService();
     const ocrResponse = await fetch("http://127.0.0.1:8010/translate", {
       method: "POST",
       body: formData,
@@ -164,9 +172,10 @@ export async function POST(request: NextRequest) {
       engine: payload.engine || input.ocrEngine,
       sourceText: payload.sourceText || "",
       translatedText: payload.translatedText || "",
-      warnings: payload.warnings ?? [],
+      warnings: [...(payload.warnings ?? []), ...saved.warnings],
     });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    } catch (error) {
+      return handleRouteError(error);
+    }
+  }).catch(handleRouteError);
 }
